@@ -1,0 +1,31 @@
+# 2026/06/18 22:55:09.687004 [TestProperty13_CachePutGetRoundTrip] [rapid] draw toolName: "a"
+# 2026/06/18 22:55:09.687009 [TestProperty13_CachePutGetRoundTrip] [rapid] draw itemKey: "a"
+# 2026/06/18 22:55:09.687011 [TestProperty13_CachePutGetRoundTrip] [rapid] draw inputParams: map[string]string{}
+# 2026/06/18 22:55:09.687017 [TestProperty13_CachePutGetRoundTrip] [rapid] draw result: json.RawMessage{0x7b, 0x22, 0x61, 0x22, 0x3a, 0x22, 0x22, 0x7d}
+# 2026/06/18 22:55:09.687150 [TestProperty13_CachePutGetRoundTrip] Result mismatch: got "{\n    \"a\": \"\"\n  }", want "{\"a\":\"\"}"
+# 
+v0.4.8#15525709819813092074
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0

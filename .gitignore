@@ -1,0 +1,18 @@
+# Binaries
+ack-scanner-v2
+*.exe
+*.test
+*.out
+
+# Cache directory
+.ack-scanner-v2/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

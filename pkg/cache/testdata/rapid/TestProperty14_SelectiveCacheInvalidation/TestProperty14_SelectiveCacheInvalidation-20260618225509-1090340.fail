@@ -1,0 +1,59 @@
+# 2026/06/18 22:55:09.864722 [TestProperty14_SelectiveCacheInvalidation] [rapid] draw toolNameA: "a"
+# 2026/06/18 22:55:09.864726 [TestProperty14_SelectiveCacheInvalidation] [rapid] draw toolNameB: "a"
+# 2026/06/18 22:55:09.864728 [TestProperty14_SelectiveCacheInvalidation] [rapid] draw itemKeyA: "a"
+# 2026/06/18 22:55:09.864729 [TestProperty14_SelectiveCacheInvalidation] [rapid] draw itemKeyB: "a"
+# 2026/06/18 22:55:09.864730 [TestProperty14_SelectiveCacheInvalidation] [rapid] draw inputParamsA: map[string]string{}
+# 2026/06/18 22:55:09.864733 [TestProperty14_SelectiveCacheInvalidation] [rapid] draw inputParamsB: map[string]string{}
+# 2026/06/18 22:55:09.864737 [TestProperty14_SelectiveCacheInvalidation] [rapid] draw resultA: json.RawMessage{0x7b, 0x22, 0x61, 0x22, 0x3a, 0x22, 0x22, 0x7d}
+# 2026/06/18 22:55:09.864741 [TestProperty14_SelectiveCacheInvalidation] [rapid] draw resultB: json.RawMessage{0x7b, 0x22, 0x61, 0x22, 0x3a, 0x22, 0x22, 0x7d}
+# 2026/06/18 22:55:09.865102 [TestProperty14_SelectiveCacheInvalidation] Result B changed after invalidation of A: got "{\n    \"a\": \"\"\n  }", want "{\"a\":\"\"}"
+# 
+v0.4.8#9712588318912971738
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
