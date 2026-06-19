@@ -166,7 +166,7 @@ func TestFullScan_SNSController(t *testing.T) {
 
 	// Phase 6: Generate report
 	t.Log("Phase 6: Generating report...")
-	report := tools.GenerateReport(matchResults, []types.ControllerInfo{*snsController}, nil)
+	report := tools.GenerateReport(matchResults, []types.ControllerInfo{*snsController}, nil, nil)
 
 	// Verify report structure
 	if report == nil {

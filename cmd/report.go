@@ -127,7 +127,7 @@ Terraform documentation analysis.`,
 		}
 
 		// Generate report
-		report := tools.GenerateReport(matchResult.Results, controllers, generatorConfigs, log)
+		report := tools.GenerateReport(matchResult.Results, controllers, generatorConfigs, nil, log)
 
 		// Format output using reporter
 		return reporter.Format(report, output, os.Stdout)

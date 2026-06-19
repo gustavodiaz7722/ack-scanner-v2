@@ -14,6 +14,7 @@ import (
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/agent"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/cache"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/discovery"
+	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/ignore"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/logger"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/parser"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/reporter"
@@ -32,6 +33,7 @@ type Orchestrator struct {
 	resultCache *cache.ResultCache
 	log         *logger.Logger
 	maxParallel int
+	ignoreList  *ignore.List
 }
 
 // RunFullScan executes the complete workflow.
@@ -120,7 +122,7 @@ func (o *Orchestrator) RunFullScan(ctx context.Context) (*types.GapReport, error
 	o.log.PhaseStart(6, "Generating gap report")
 	phaseStart = time.Now()
 	generatorConfigs := o.loadGeneratorConfigs(controllers)
-	report := tools.GenerateReport(matchResult.Results, controllers, generatorConfigs, o.log)
+	report := tools.GenerateReport(matchResult.Results, controllers, generatorConfigs, o.ignoreList, o.log)
 	o.log.PhaseComplete(6, "Report: %d entries, %d gaps, %d annotated, %d incorrect (%s)",
 		len(report.Entries), report.Summary.GapCount, report.Summary.AnnotatedCount,
 		report.Summary.IncorrectCount, formatDur(time.Since(phaseStart)))
@@ -539,6 +541,17 @@ skipping failed items, and reporting skipped items at the end.`,
 		log.Info("Using model: %s", modelID)
 		log.Info("Max parallel agent calls: %d", maxParallel)
 
+		// Load ignore configuration
+		ignoreFile, _ := cmd.Flags().GetString("ignore-file")
+		ignoreConfig, err := ignore.LoadConfig(ignoreFile)
+		if err != nil {
+			return fmt.Errorf("loading ignore config: %w", err)
+		}
+		ignoreList := ignore.NewList(ignoreConfig)
+		if ignoreList.Count() > 0 {
+			log.Info("Loaded %d ignore rules from %s", ignoreList.Count(), ignoreFile)
+		}
+
 		// Create orchestrator
 		orch := &Orchestrator{
 			agent:       ag,
@@ -546,6 +559,7 @@ skipping failed items, and reporting skipped items at the end.`,
 			resultCache: resultCache,
 			log:         log,
 			maxParallel: maxParallel,
+			ignoreList:  ignoreList,
 		}
 
 		// Run full scan
@@ -562,5 +576,6 @@ skipping failed items, and reporting skipped items at the end.`,
 func init() {
 	scanCmd.Flags().Int("max-parallel", DefaultMaxParallel, "Maximum number of concurrent agent calls (default 3)")
 	scanCmd.Flags().Bool("debug", false, "Enable debug-level logging (includes cache hits, token counts)")
+	scanCmd.Flags().String("ignore-file", "ignore.yaml", "Path to ignore configuration file for excluding fields from the report")
 	rootCmd.AddCommand(scanCmd)
 }

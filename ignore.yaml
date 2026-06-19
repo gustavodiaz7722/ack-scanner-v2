@@ -1,0 +1,63 @@
+# ACK Scanner v2 - Ignore Configuration
+#
+# Fields listed here are excluded from the gap report. Common reasons:
+# - "field inside list": the field is nested inside an array, which cannot
+#   support is_document/is_iam_policy annotations at the item level.
+# - "not a JSON field": the scanner incorrectly identified this as a JSON
+#   document field (false positive).
+# - "custom comparison exists": the controller already handles JSON comparison
+#   via a custom hook that cannot be replaced with a simple annotation.
+
+ignored_fields:
+  # --- Fields inside lists (unsupported) ---
+  - service: autoscaling
+    resource: AutoScalingGroup
+    field: notificationMetadata
+    reason: "field inside list: LifecycleHookSpecificationList[]"
+
+  - service: lambda
+    resource: EventSourceMapping
+    field: pattern
+    reason: "field inside list: FilterCriteria.Filters[]"
+
+  - service: ecs
+    resource: TaskDefinition
+    field: containerDefinitions
+    reason: "field is an array of objects, not a single JSON document"
+
+  - service: wafv2
+    resource: WebACL
+    field: rules
+    reason: "field is an array of Rule objects, not a JSON document"
+
+  - service: wafv2
+    resource: RuleGroup
+    field: andStatement
+    reason: "field is an array of Statement objects, not a JSON document"
+
+  - service: pipes
+    resource: Pipe
+    field: pattern
+    reason: "field inside list: SourceParameters.FilterCriteria.Filters[]"
+
+  # --- Not actually JSON fields (scanner false positives) ---
+  - service: iam
+    resource: Group
+    field: policies
+    reason: "not a JSON field: array of policy ARN strings"
+
+  - service: ssm
+    resource: Parameter
+    field: value
+    reason: "not a JSON field: arbitrary parameter value string"
+
+  - service: secretsmanager
+    resource: Secret
+    field: key
+    reason: "not a JSON field: SecretKeyReference key name"
+
+  # --- Custom comparison that cannot use simple annotation ---
+  - service: pipes
+    resource: Pipe
+    field: inputTemplate
+    reason: "parent objects use custom comparison with compare.is_ignored — requires complex refactor"
