@@ -4,13 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/agent"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/cache"
+	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/logger"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/types"
 )
 
@@ -38,7 +40,9 @@ func AnalyzeDoc(
 	docContent string,
 	resultCache *cache.ResultCache,
 	validator agent.ResponseValidator,
+	log ...*logger.Logger,
 ) (*AnalyzeFieldsOutput, error) {
+	l := resolveLogger(log)
 	itemKey := deriveItemKey(docFilePath)
 	inputParams := buildAnalyzeInputParams(docFilePath, docContent)
 
@@ -48,10 +52,14 @@ func AnalyzeDoc(
 		if err == nil && entry != nil {
 			var output AnalyzeFieldsOutput
 			if err := json.Unmarshal(entry.Result, &output); err == nil {
+				l.CacheHit(analyzeFieldsTool + "/" + itemKey)
 				return &output, nil
 			}
 		}
 	}
+
+	l.CacheMiss(analyzeFieldsTool + "/" + itemKey)
+	l.AgentCall("analyze_fields", itemKey)
 
 	// Build the prompt
 	prompt := buildAnalyzeFieldsPrompt(docFilePath, docContent)
@@ -59,19 +67,25 @@ func AnalyzeDoc(
 	// Call the agent with validation
 	result, err := ag.RunWithValidation(ctx, prompt, validator)
 	if err != nil {
+		l.Error("analyze_fields agent call failed for %s: %v", itemKey, err)
 		return nil, err
 	}
 
 	// Parse the response
 	var output AnalyzeFieldsOutput
 	if err := json.Unmarshal([]byte(result.FinalResponse), &output); err != nil {
+		l.Error("analyze_fields failed to parse response for %s: %v", itemKey, err)
 		return nil, fmt.Errorf("parsing agent response for doc %q: %w", docFilePath, err)
 	}
 
 	// Cache the result
 	if resultCache != nil {
 		resultJSON, _ := json.Marshal(output)
-		_ = resultCache.Put(analyzeFieldsTool, itemKey, inputParams, resultJSON)
+		if err := resultCache.Put(analyzeFieldsTool, itemKey, inputParams, resultJSON); err != nil {
+			l.Warn("analyze_fields failed to cache result for %s: %v", itemKey, err)
+		} else {
+			l.Debug("analyze_fields cached result for %s (%d JSON fields found)", itemKey, len(output.JSONFields))
+		}
 	}
 
 	return &output, nil
@@ -88,9 +102,30 @@ func AnalyzeAllDocs(
 	repoDir string,
 	resultCache *cache.ResultCache,
 	validator agent.ResponseValidator,
+	log ...*logger.Logger,
 ) (*AnalyzeAllDocsOutput, error) {
+	return AnalyzeAllDocsParallel(ctx, ag, mappings, repoDir, resultCache, validator, 1, log...)
+}
+
+// AnalyzeAllDocsParallel orchestrates analyzing all mapped Terraform documentation
+// files with bounded concurrency.
+func AnalyzeAllDocsParallel(
+	ctx context.Context,
+	ag *agent.Agent,
+	mappings []types.ControllerMapping,
+	repoDir string,
+	resultCache *cache.ResultCache,
+	validator agent.ResponseValidator,
+	maxParallel int,
+	log ...*logger.Logger,
+) (*AnalyzeAllDocsOutput, error) {
+	l := resolveLogger(log)
 	output := &AnalyzeAllDocsOutput{
 		Results: make(map[string]*AnalyzeFieldsOutput),
+	}
+
+	if maxParallel <= 0 {
+		maxParallel = 1
 	}
 
 	// Collect unique doc file paths from all mappings
@@ -105,38 +140,89 @@ func AnalyzeAllDocs(
 		}
 	}
 
-	for _, docPath := range docPaths {
+	l.Info("analyze_fields: processing %d unique doc files (parallelism: %d)", len(docPaths), maxParallel)
+
+	type result struct {
+		docPath string
+		output  *AnalyzeFieldsOutput
+		skipped bool
+	}
+
+	total := len(docPaths)
+	results := make([]result, total)
+	sem := make(chan struct{}, maxParallel)
+	var wg sync.WaitGroup
+	var cacheHits, cacheMisses atomic.Int32
+
+	for i, docPath := range docPaths {
 		select {
 		case <-ctx.Done():
-			return output, ctx.Err()
+			break
 		default:
 		}
 
-		// Read the doc content from the repo directory
-		fullPath := filepath.Join(repoDir, docPath)
-		contentBytes, err := os.ReadFile(fullPath)
-		if err != nil {
-			log.Printf("[analyze_fields] skipping doc %q: failed to read file: %v", docPath, err)
-			output.Skipped = append(output.Skipped, docPath)
-			continue
-		}
-		docContent := string(contentBytes)
+		wg.Add(1)
+		go func(idx int, dp string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 
-		// Call AnalyzeDoc
-		result, err := AnalyzeDoc(ctx, ag, docPath, docContent, resultCache, validator)
-		if err != nil {
-			if err == agent.ErrSkipItem {
-				log.Printf("[analyze_fields] skipping doc %q: validation failed after retries", docPath)
-				output.Skipped = append(output.Skipped, docPath)
-				continue
+			// Read the doc content from the repo directory
+			fullPath := filepath.Join(repoDir, dp)
+			contentBytes, err := os.ReadFile(fullPath)
+			if err != nil {
+				l.Skip(dp, fmt.Sprintf("failed to read file: %v", err))
+				results[idx] = result{docPath: dp, skipped: true}
+				return
 			}
-			log.Printf("[analyze_fields] skipping doc %q: %v", docPath, err)
-			output.Skipped = append(output.Skipped, docPath)
-			continue
-		}
+			docContent := string(contentBytes)
 
-		output.Results[docPath] = result
+			// Check cache
+			itemKey := deriveItemKey(dp)
+			inputParams := buildAnalyzeInputParams(dp, docContent)
+			if resultCache != nil {
+				entry, err := resultCache.Get(analyzeFieldsTool, itemKey, inputParams)
+				if err == nil && entry != nil {
+					var cachedOutput AnalyzeFieldsOutput
+					if err := json.Unmarshal(entry.Result, &cachedOutput); err == nil {
+						l.CacheHit(analyzeFieldsTool + "/" + itemKey)
+						cacheHits.Add(1)
+						results[idx] = result{docPath: dp, output: &cachedOutput}
+						return
+					}
+				}
+			}
+
+			cacheMisses.Add(1)
+
+			// Cache miss — call agent
+			analyzeResult, err := AnalyzeDoc(ctx, ag, dp, docContent, resultCache, validator, l)
+			if err != nil {
+				if err == agent.ErrSkipItem {
+					l.Skip(itemKey, "validation failed after retries")
+				} else {
+					l.Error("analyze_fields error for %s: %v", itemKey, err)
+				}
+				results[idx] = result{docPath: dp, skipped: true}
+				return
+			}
+
+			results[idx] = result{docPath: dp, output: analyzeResult}
+		}(i, docPath)
 	}
+
+	wg.Wait()
+
+	// Aggregate results
+	for _, r := range results {
+		if r.output != nil {
+			output.Results[r.docPath] = r.output
+		} else if r.skipped {
+			output.Skipped = append(output.Skipped, r.docPath)
+		}
+	}
+
+	l.CacheSummary("analyze_fields", int(cacheHits.Load()), int(cacheMisses.Load()), len(output.Skipped))
 
 	return output, nil
 }

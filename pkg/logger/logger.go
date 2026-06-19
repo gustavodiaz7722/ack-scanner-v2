@@ -190,6 +190,35 @@ func (l *Logger) CacheMiss(item string) {
 	l.write(LevelDebug, iconAgent, msg)
 }
 
+// CacheStore logs a successful cache store operation.
+func (l *Logger) CacheStore(item string) {
+	if l.level > LevelDebug {
+		return
+	}
+	msg := fmt.Sprintf("cache store: %s", item)
+	if l.color {
+		l.write(LevelDebug, iconCache, dim+msg+reset)
+	} else {
+		l.write(LevelDebug, iconCache, msg)
+	}
+}
+
+// CacheSummary logs aggregate cache statistics for a tool phase.
+func (l *Logger) CacheSummary(tool string, hits, misses, skipped int) {
+	total := hits + misses
+	hitRate := 0.0
+	if total > 0 {
+		hitRate = float64(hits) / float64(total) * 100
+	}
+	msg := fmt.Sprintf("%s cache: %d hits, %d misses (%.0f%% hit rate), %d skipped",
+		tool, hits, misses, hitRate, skipped)
+	if l.color {
+		l.write(LevelInfo, iconCache, cyan+msg+reset)
+	} else {
+		l.write(LevelInfo, iconCache, msg)
+	}
+}
+
 // AgentCall logs an agent invocation with context.
 func (l *Logger) AgentCall(tool, item string) {
 	msg := fmt.Sprintf("%s → %s", tool, item)

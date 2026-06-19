@@ -47,14 +47,15 @@ ACK CRD string fields to determine which ACK fields are JSON documents.`,
 		}
 
 		// Discover controllers
-		ghDiscoverer := discovery.NewGitHubDiscoverer(githubToken, repoCache)
+		log := newCmdLogger()
+		ghDiscoverer := discovery.NewGitHubDiscoverer(githubToken, repoCache, log)
 		controllers, err := ghDiscoverer.DiscoverControllers(ctx)
 		if err != nil {
 			return fmt.Errorf("discovering controllers: %w", err)
 		}
 
 		// Discover Terraform resources
-		tfResult, err := tools.DiscoverTerraform(ctx, repoCache)
+		tfResult, err := tools.DiscoverTerraform(ctx, repoCache, log)
 		if err != nil {
 			return fmt.Errorf("discovering terraform resources: %w", err)
 		}
@@ -74,7 +75,7 @@ ACK CRD string fields to determine which ACK fields are JSON documents.`,
 		mapValidator := &agent.JSONValidator{
 			RequiredFields: []string{"mapping"},
 		}
-		mapResult, err := tools.MapAllControllers(ctx, ag, controllers, tfResult.Resources, resultCache, mapValidator)
+		mapResult, err := tools.MapAllControllers(ctx, ag, controllers, tfResult.Resources, resultCache, mapValidator, log)
 		if err != nil {
 			return fmt.Errorf("mapping controllers: %w", err)
 		}
@@ -88,16 +89,20 @@ ACK CRD string fields to determine which ACK fields are JSON documents.`,
 		analyzeValidator := &agent.JSONValidator{
 			RequiredFields: []string{"resource_type", "json_fields"},
 		}
-		analysisResult, err := tools.AnalyzeAllDocs(ctx, ag, mapResult.Mappings, repoDir, resultCache, analyzeValidator)
+		analysisResult, err := tools.AnalyzeAllDocs(ctx, ag, mapResult.Mappings, repoDir, resultCache, analyzeValidator, log)
 		if err != nil {
 			return fmt.Errorf("analyzing fields: %w", err)
 		}
 
 		// Match fields
+		maxParallel, _ := cmd.Flags().GetInt("max-parallel")
+		if maxParallel <= 0 {
+			maxParallel = tools.DefaultMaxParallel
+		}
 		matchValidator := &agent.JSONValidator{
 			RequiredFields: []string{"matches", "unmatched_tf_fields"},
 		}
-		result, err := tools.MatchAllResources(ctx, ag, controllers, analysisResult.Results, mapResult.Mappings, resultCache, matchValidator)
+		result, err := tools.MatchAllResourcesParallel(ctx, ag, controllers, analysisResult.Results, mapResult.Mappings, resultCache, matchValidator, maxParallel, log)
 		if err != nil {
 			return fmt.Errorf("matching fields: %w", err)
 		}
@@ -125,5 +130,6 @@ ACK CRD string fields to determine which ACK fields are JSON documents.`,
 
 func init() {
 	matchFieldsCmd.Flags().Bool("refresh", false, "Invalidate cache and re-match fields")
+	matchFieldsCmd.Flags().Int("max-parallel", tools.DefaultMaxParallel, "Maximum number of concurrent agent calls")
 	rootCmd.AddCommand(matchFieldsCmd)
 }

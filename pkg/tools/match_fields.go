@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/agent"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/cache"
+	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/logger"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/types"
 )
 
@@ -37,7 +39,9 @@ func MatchResource(
 	serviceName string,
 	resultCache *cache.ResultCache,
 	validator agent.ResponseValidator,
+	log ...*logger.Logger,
 ) (*MatchFieldsOutput, error) {
+	l := resolveLogger(log)
 	itemKey := serviceName + "_" + resource.Kind
 	inputParams := buildMatchInputParams(resource, tfJSONFields, serviceName)
 
@@ -47,10 +51,14 @@ func MatchResource(
 		if err == nil && entry != nil {
 			var output MatchFieldsOutput
 			if err := json.Unmarshal(entry.Result, &output); err == nil {
+				l.CacheHit(matchFieldsTool + "/" + itemKey)
 				return &output, nil
 			}
 		}
 	}
+
+	l.CacheMiss(matchFieldsTool + "/" + itemKey)
+	l.AgentCall("match_fields", serviceName+"/"+resource.Kind)
 
 	// Build the prompt
 	prompt := buildMatchFieldsPrompt(resource, tfJSONFields, serviceName)
@@ -58,19 +66,26 @@ func MatchResource(
 	// Call the agent with validation
 	result, err := ag.RunWithValidation(ctx, prompt, validator)
 	if err != nil {
+		l.Error("match_fields agent call failed for %s: %v", itemKey, err)
 		return nil, err
 	}
 
 	// Parse the response
 	var output MatchFieldsOutput
 	if err := json.Unmarshal([]byte(result.FinalResponse), &output); err != nil {
+		l.Error("match_fields failed to parse response for %s: %v", itemKey, err)
 		return nil, fmt.Errorf("parsing agent response for resource %q in service %q: %w", resource.Kind, serviceName, err)
 	}
 
 	// Cache the result
 	if resultCache != nil {
 		resultJSON, _ := json.Marshal(output)
-		_ = resultCache.Put(matchFieldsTool, itemKey, inputParams, resultJSON)
+		if err := resultCache.Put(matchFieldsTool, itemKey, inputParams, resultJSON); err != nil {
+			l.Warn("match_fields failed to cache result for %s: %v", itemKey, err)
+		} else {
+			l.Debug("match_fields cached result for %s (%d matches, %d unmatched)",
+				itemKey, len(output.Matches), len(output.Unmatched))
+		}
 	}
 
 	return &output, nil
@@ -88,9 +103,30 @@ func MatchAllResources(
 	mappings []types.ControllerMapping,
 	resultCache *cache.ResultCache,
 	validator agent.ResponseValidator,
+	log ...*logger.Logger,
 ) (*MatchAllResourcesOutput, error) {
+	return MatchAllResourcesParallel(ctx, ag, controllers, analysisResults, mappings, resultCache, validator, 1, log...)
+}
+
+// MatchAllResourcesParallel orchestrates matching all resources with bounded concurrency.
+func MatchAllResourcesParallel(
+	ctx context.Context,
+	ag *agent.Agent,
+	controllers []types.ControllerInfo,
+	analysisResults map[string]*AnalyzeFieldsOutput,
+	mappings []types.ControllerMapping,
+	resultCache *cache.ResultCache,
+	validator agent.ResponseValidator,
+	maxParallel int,
+	log ...*logger.Logger,
+) (*MatchAllResourcesOutput, error) {
+	l := resolveLogger(log)
 	output := &MatchAllResourcesOutput{
 		Results: make(map[string]*MatchFieldsOutput),
+	}
+
+	if maxParallel <= 0 {
+		maxParallel = 1
 	}
 
 	// Build a lookup from doc file path to its analyzed JSON fields
@@ -109,61 +145,110 @@ func MatchAllResources(
 		}
 	}
 
-	for _, controller := range controllers {
-		// Get TF doc paths for this controller
-		docPaths := serviceMappings[controller.ServiceName]
+	// Build flat list of items to process
+	type matchItem struct {
+		controller types.ControllerInfo
+		resource   types.ResourceInfo
+		tfFields   []types.JSONFieldInfo
+		itemKey    string
+	}
 
-		// Collect all TF JSON fields from the mapped docs for this controller
+	var items []matchItem
+	for _, controller := range controllers {
+		docPaths := serviceMappings[controller.ServiceName]
 		var tfJSONFields []types.JSONFieldInfo
 		for _, docPath := range docPaths {
 			if fields, ok := docFieldsMap[docPath]; ok {
 				tfJSONFields = append(tfJSONFields, fields...)
 			}
 		}
-
-		// Skip if no TF JSON fields to match against
 		if len(tfJSONFields) == 0 {
+			l.Debug("match_fields: skipping controller %s (no TF JSON fields)", controller.ServiceName)
 			continue
 		}
-
 		for _, resource := range controller.Resources {
-			select {
-			case <-ctx.Done():
-				return output, ctx.Err()
-			default:
-			}
+			items = append(items, matchItem{
+				controller: controller,
+				resource:   resource,
+				tfFields:   tfJSONFields,
+				itemKey:    controller.ServiceName + "_" + resource.Kind,
+			})
+		}
+	}
 
-			itemKey := controller.ServiceName + "_" + resource.Kind
+	l.Info("match_fields: processing %d resources across %d controllers (parallelism: %d)",
+		len(items), len(controllers), maxParallel)
+
+	type result struct {
+		itemKey string
+		output  *MatchFieldsOutput
+		skipped bool
+	}
+
+	total := len(items)
+	results := make([]result, total)
+	sem := make(chan struct{}, maxParallel)
+	var wg sync.WaitGroup
+	var cacheHits, cacheMisses atomic.Int32
+
+	for i, item := range items {
+		select {
+		case <-ctx.Done():
+			break
+		default:
+		}
+
+		wg.Add(1)
+		go func(idx int, mi matchItem) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 
 			// Check cache
-			inputParams := buildMatchInputParams(resource, tfJSONFields, controller.ServiceName)
+			inputParams := buildMatchInputParams(mi.resource, mi.tfFields, mi.controller.ServiceName)
 			if resultCache != nil {
-				entry, err := resultCache.Get(matchFieldsTool, itemKey, inputParams)
+				entry, err := resultCache.Get(matchFieldsTool, mi.itemKey, inputParams)
 				if err == nil && entry != nil {
 					var matchResult MatchFieldsOutput
 					if err := json.Unmarshal(entry.Result, &matchResult); err == nil {
-						output.Results[itemKey] = &matchResult
-						continue
+						l.CacheHit(matchFieldsTool + "/" + mi.itemKey)
+						cacheHits.Add(1)
+						results[idx] = result{itemKey: mi.itemKey, output: &matchResult}
+						return
 					}
 				}
 			}
 
+			cacheMisses.Add(1)
+
 			// Cache miss — call agent
-			matchResult, err := MatchResource(ctx, ag, resource, tfJSONFields, controller.ServiceName, resultCache, validator)
+			matchResult, err := MatchResource(ctx, ag, mi.resource, mi.tfFields, mi.controller.ServiceName, resultCache, validator, l)
 			if err != nil {
 				if err == agent.ErrSkipItem {
-					log.Printf("[match_fields] skipping resource %s/%s: validation failed after retries", controller.ServiceName, resource.Kind)
-					output.Skipped = append(output.Skipped, itemKey)
-					continue
+					l.Skip(mi.controller.ServiceName+"/"+mi.resource.Kind, "validation failed after retries")
+				} else {
+					l.Error("match_fields error for %s/%s: %v", mi.controller.ServiceName, mi.resource.Kind, err)
 				}
-				log.Printf("[match_fields] skipping resource %s/%s: %v", controller.ServiceName, resource.Kind, err)
-				output.Skipped = append(output.Skipped, itemKey)
-				continue
+				results[idx] = result{itemKey: mi.itemKey, skipped: true}
+				return
 			}
 
-			output.Results[itemKey] = matchResult
+			results[idx] = result{itemKey: mi.itemKey, output: matchResult}
+		}(i, item)
+	}
+
+	wg.Wait()
+
+	// Aggregate results
+	for _, r := range results {
+		if r.output != nil {
+			output.Results[r.itemKey] = r.output
+		} else if r.skipped {
+			output.Skipped = append(output.Skipped, r.itemKey)
 		}
 	}
+
+	l.CacheSummary("match_fields", int(cacheHits.Load()), int(cacheMisses.Load()), len(output.Skipped))
 
 	return output, nil
 }

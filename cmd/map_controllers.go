@@ -47,14 +47,15 @@ Terraform AWS provider documentation files, resolving naming convention differen
 		}
 
 		// Discover controllers first
-		ghDiscoverer := discovery.NewGitHubDiscoverer(githubToken, repoCache)
+		log := newCmdLogger()
+		ghDiscoverer := discovery.NewGitHubDiscoverer(githubToken, repoCache, log)
 		controllers, err := ghDiscoverer.DiscoverControllers(ctx)
 		if err != nil {
 			return fmt.Errorf("discovering controllers: %w", err)
 		}
 
 		// Discover Terraform resources
-		tfResult, err := tools.DiscoverTerraform(ctx, repoCache)
+		tfResult, err := tools.DiscoverTerraform(ctx, repoCache, log)
 		if err != nil {
 			return fmt.Errorf("discovering terraform resources: %w", err)
 		}
@@ -76,7 +77,11 @@ Terraform AWS provider documentation files, resolving naming convention differen
 		}
 
 		// Map all controllers
-		result, err := tools.MapAllControllers(ctx, ag, controllers, tfResult.Resources, resultCache, validator)
+		maxParallel, _ := cmd.Flags().GetInt("max-parallel")
+		if maxParallel <= 0 {
+			maxParallel = tools.DefaultMaxParallel
+		}
+		result, err := tools.MapAllControllersParallel(ctx, ag, controllers, tfResult.Resources, resultCache, validator, maxParallel, log)
 		if err != nil {
 			return fmt.Errorf("mapping controllers: %w", err)
 		}
@@ -104,5 +109,6 @@ Terraform AWS provider documentation files, resolving naming convention differen
 
 func init() {
 	mapControllersCmd.Flags().Bool("refresh", false, "Invalidate cache and re-map controllers")
+	mapControllersCmd.Flags().Int("max-parallel", tools.DefaultMaxParallel, "Maximum number of concurrent agent calls")
 	rootCmd.AddCommand(mapControllersCmd)
 }

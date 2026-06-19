@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -79,14 +80,24 @@ func ParseGeneratorConfigBytes(data []byte) (*GeneratorConfig, error) {
 }
 
 // HasAnnotation checks if a specific field of a resource has is_document or is_iam_policy annotation.
+// The lookup is case-insensitive for the field name since CRD schemas use camelCase
+// (e.g., "policy") while generator.yaml uses PascalCase (e.g., "Policy").
 func (gc *GeneratorConfig) HasAnnotation(resourceName, fieldName string) (isDocument, isIAMPolicy bool) {
 	res, ok := gc.Resources[resourceName]
 	if !ok {
 		return false, false
 	}
+	// Try exact match first
 	field, ok := res.Fields[fieldName]
-	if !ok {
-		return false, false
+	if ok {
+		return field.IsDocument, field.IsIAMPolicy
 	}
-	return field.IsDocument, field.IsIAMPolicy
+	// Fall back to case-insensitive match
+	fieldLower := strings.ToLower(fieldName)
+	for key, f := range res.Fields {
+		if strings.ToLower(key) == fieldLower {
+			return f.IsDocument, f.IsIAMPolicy
+		}
+	}
+	return false, false
 }

@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 )
 
-// RepoCache manages git clone/fetch caching for repositories.
-// Repositories are cloned once and subsequently fetched to update,
-// avoiding redundant full clones.
+// RepoCache manages git clone caching for repositories.
+// Repositories are cloned once and reused from disk on subsequent calls.
+// Use Invalidate or InvalidateAll to force a fresh clone.
 type RepoCache struct {
 	baseDir string
 }
@@ -29,17 +29,13 @@ func (r *RepoCache) repoDir(org, repo string) string {
 }
 
 // EnsureRepo ensures a repository is cloned locally. If it already exists,
-// it performs a git fetch to update. Returns the local path to the repository.
+// returns the cached path immediately without fetching. Use Invalidate to
+// force a fresh clone.
 func (r *RepoCache) EnsureRepo(org, repo string) (string, error) {
 	dir := r.repoDir(org, repo)
 
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-		// Repo already exists, fetch updates
-		cmd := exec.Command("git", "fetch", "--all")
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("git fetch %s/%s: %s: %w", org, repo, string(out), err)
-		}
+		// Repo already exists — return cached path
 		return dir, nil
 	}
 
@@ -56,17 +52,13 @@ func (r *RepoCache) EnsureRepo(org, repo string) (string, error) {
 }
 
 // EnsureRepoSparse ensures a repository is cloned locally with sparse checkout,
-// only checking out the specified paths. Returns the local path.
+// only checking out the specified paths. If it already exists, returns the
+// cached path immediately without fetching. Use Invalidate to force a fresh clone.
 func (r *RepoCache) EnsureRepoSparse(org, repo string, paths []string) (string, error) {
 	dir := r.repoDir(org, repo)
 
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-		// Repo already exists, fetch updates
-		cmd := exec.Command("git", "fetch", "--all")
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("git fetch %s/%s: %s: %w", org, repo, string(out), err)
-		}
+		// Repo already exists — return cached path
 		return dir, nil
 	}
 

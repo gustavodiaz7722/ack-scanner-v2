@@ -49,14 +49,15 @@ Terraform documentation analysis.`,
 		}
 
 		// Discover controllers
-		ghDiscoverer := discovery.NewGitHubDiscoverer(githubToken, repoCache)
+		log := newCmdLogger()
+		ghDiscoverer := discovery.NewGitHubDiscoverer(githubToken, repoCache, log)
 		controllers, err := ghDiscoverer.DiscoverControllers(ctx)
 		if err != nil {
 			return fmt.Errorf("discovering controllers: %w", err)
 		}
 
 		// Discover Terraform resources
-		tfResult, err := tools.DiscoverTerraform(ctx, repoCache)
+		tfResult, err := tools.DiscoverTerraform(ctx, repoCache, log)
 		if err != nil {
 			return fmt.Errorf("discovering terraform resources: %w", err)
 		}
@@ -76,7 +77,7 @@ Terraform documentation analysis.`,
 		mapValidator := &agent.JSONValidator{
 			RequiredFields: []string{"mapping"},
 		}
-		mapResult, err := tools.MapAllControllers(ctx, ag, controllers, tfResult.Resources, resultCache, mapValidator)
+		mapResult, err := tools.MapAllControllers(ctx, ag, controllers, tfResult.Resources, resultCache, mapValidator, log)
 		if err != nil {
 			return fmt.Errorf("mapping controllers: %w", err)
 		}
@@ -90,7 +91,7 @@ Terraform documentation analysis.`,
 		analyzeValidator := &agent.JSONValidator{
 			RequiredFields: []string{"resource_type", "json_fields"},
 		}
-		analysisResult, err := tools.AnalyzeAllDocs(ctx, ag, mapResult.Mappings, repoDir, resultCache, analyzeValidator)
+		analysisResult, err := tools.AnalyzeAllDocs(ctx, ag, mapResult.Mappings, repoDir, resultCache, analyzeValidator, log)
 		if err != nil {
 			return fmt.Errorf("analyzing fields: %w", err)
 		}
@@ -99,7 +100,7 @@ Terraform documentation analysis.`,
 		matchValidator := &agent.JSONValidator{
 			RequiredFields: []string{"matches", "unmatched_tf_fields"},
 		}
-		matchResult, err := tools.MatchAllResources(ctx, ag, controllers, analysisResult.Results, mapResult.Mappings, resultCache, matchValidator)
+		matchResult, err := tools.MatchAllResources(ctx, ag, controllers, analysisResult.Results, mapResult.Mappings, resultCache, matchValidator, log)
 		if err != nil {
 			return fmt.Errorf("matching fields: %w", err)
 		}
@@ -126,7 +127,7 @@ Terraform documentation analysis.`,
 		}
 
 		// Generate report
-		report := tools.GenerateReport(matchResult.Results, controllers, generatorConfigs)
+		report := tools.GenerateReport(matchResult.Results, controllers, generatorConfigs, log)
 
 		// Format output using reporter
 		return reporter.Format(report, output, os.Stdout)

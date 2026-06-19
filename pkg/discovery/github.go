@@ -11,6 +11,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/cache"
+	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/logger"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/parser"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/types"
 )
@@ -43,11 +44,12 @@ type GitHubDiscoverer struct {
 	ghClient  GitHubClient
 	repoCache *cache.RepoCache
 	parser    *parser.CRDParser
+	log       *logger.Logger
 }
 
 // NewGitHubDiscoverer creates a new GitHubDiscoverer with a GitHub token and repo cache.
 // If token is empty, unauthenticated access is used (subject to rate limits).
-func NewGitHubDiscoverer(token string, repoCache *cache.RepoCache) *GitHubDiscoverer {
+func NewGitHubDiscoverer(token string, repoCache *cache.RepoCache, log ...*logger.Logger) *GitHubDiscoverer {
 	var httpClient *github.Client
 	if token != "" {
 		ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
@@ -57,10 +59,16 @@ func NewGitHubDiscoverer(token string, repoCache *cache.RepoCache) *GitHubDiscov
 		httpClient = github.NewClient(nil)
 	}
 
+	l := logger.Nop()
+	if len(log) > 0 && log[0] != nil {
+		l = log[0]
+	}
+
 	return &GitHubDiscoverer{
 		ghClient:  &githubClientWrapper{client: httpClient},
 		repoCache: repoCache,
 		parser:    parser.NewCRDParser(),
+		log:       l,
 	}
 }
 
@@ -71,6 +79,7 @@ func NewGitHubDiscovererWithClient(client GitHubClient, repoCache *cache.RepoCac
 		ghClient:  client,
 		repoCache: repoCache,
 		parser:    parser.NewCRDParser(),
+		log:       logger.Nop(),
 	}
 }
 
@@ -78,24 +87,44 @@ func NewGitHubDiscovererWithClient(client GitHubClient, repoCache *cache.RepoCac
 // parses their CRDs, and returns ControllerInfo for each controller that
 // has at least one CRD with string fields. Controllers with no CRDs are excluded.
 func (d *GitHubDiscoverer) DiscoverControllers(ctx context.Context) ([]types.ControllerInfo, error) {
+	d.log.Info("discover_controllers: listing controller repos from GitHub org %s", ACKOrg)
+
 	repos, err := d.listControllerRepos(ctx)
 	if err != nil {
+		d.log.Error("discover_controllers: failed to list repos: %v", err)
 		return nil, fmt.Errorf("listing controller repos: %w", err)
 	}
 
+	d.log.Info("discover_controllers: found %d controller repos, processing CRDs", len(repos))
+
 	var controllers []types.ControllerInfo
+	skipped := 0
 	for _, repo := range repos {
 		info, err := d.processController(repo)
 		if err != nil {
-			// Skip controllers that fail to process but continue with others
+			d.log.Debug("discover_controllers: skipping %s: %v", repo.GetName(), err)
+			skipped++
 			continue
 		}
 		if info != nil && len(info.Resources) > 0 {
 			controllers = append(controllers, *info)
+			d.log.Debug("discover_controllers: %s — %d resources, %d string fields",
+				info.ServiceName, len(info.Resources), countStringFields(info.Resources))
 		}
 	}
 
+	d.log.Info("discover_controllers: %d controllers with CRDs, %d skipped", len(controllers), skipped)
+
 	return controllers, nil
+}
+
+// countStringFields counts total string fields across resources.
+func countStringFields(resources []types.ResourceInfo) int {
+	n := 0
+	for _, r := range resources {
+		n += len(r.StringFields)
+	}
+	return n
 }
 
 // listControllerRepos fetches all repos in the ACK org and filters for controllers.
@@ -105,6 +134,7 @@ func (d *GitHubDiscoverer) listControllerRepos(ctx context.Context) ([]*github.R
 		ListOptions: github.ListOptions{PerPage: 100},
 	}
 
+	page := 1
 	for {
 		repos, resp, err := d.ghClient.ListOrgRepos(ctx, ACKOrg, opts)
 		if err != nil {
@@ -117,10 +147,13 @@ func (d *GitHubDiscoverer) listControllerRepos(ctx context.Context) ([]*github.R
 			}
 		}
 
+		d.log.Debug("discover_controllers: fetched page %d, %d repos total so far", page, len(allRepos))
+
 		if resp.NextPage == 0 {
 			break
 		}
 		opts.Page = resp.NextPage
+		page++
 	}
 
 	return allRepos, nil
@@ -148,6 +181,7 @@ func (d *GitHubDiscoverer) processController(repo *github.Repository) (*types.Co
 	serviceName := strings.TrimSuffix(repoName, ControllerSuffix)
 
 	// Clone or fetch the repo via cache
+	d.log.Debug("discover_controllers: ensuring repo cache for %s", repoName)
 	repoDir, err := d.repoCache.EnsureRepo(ACKOrg, repoName)
 	if err != nil {
 		return nil, fmt.Errorf("ensuring repo %s: %w", repoName, err)

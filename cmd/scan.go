@@ -41,7 +41,7 @@ func (o *Orchestrator) RunFullScan(ctx context.Context) (*types.GapReport, error
 	// Phase 1: Discover controllers
 	o.log.PhaseStart(1, "Discovering ACK controllers")
 	phaseStart := time.Now()
-	ghDiscoverer := discovery.NewGitHubDiscoverer(githubToken, o.repoCache)
+	ghDiscoverer := discovery.NewGitHubDiscoverer(githubToken, o.repoCache, o.log)
 	controllers, err := ghDiscoverer.DiscoverControllers(ctx)
 	if err != nil {
 		o.log.Error("discovery failed: %v", err)
@@ -59,7 +59,7 @@ func (o *Orchestrator) RunFullScan(ctx context.Context) (*types.GapReport, error
 	// Phase 2: Discover Terraform resources
 	o.log.PhaseStart(2, "Discovering Terraform resources")
 	phaseStart = time.Now()
-	tfResult, err := tools.DiscoverTerraform(ctx, o.repoCache)
+	tfResult, err := tools.DiscoverTerraform(ctx, o.repoCache, o.log)
 	if err != nil {
 		o.log.Error("terraform discovery failed: %v", err)
 		return nil, fmt.Errorf("phase 2: discovering terraform resources: %w", err)
@@ -120,7 +120,7 @@ func (o *Orchestrator) RunFullScan(ctx context.Context) (*types.GapReport, error
 	o.log.PhaseStart(6, "Generating gap report")
 	phaseStart = time.Now()
 	generatorConfigs := o.loadGeneratorConfigs(controllers)
-	report := tools.GenerateReport(matchResult.Results, controllers, generatorConfigs)
+	report := tools.GenerateReport(matchResult.Results, controllers, generatorConfigs, o.log)
 	o.log.PhaseComplete(6, "Report: %d entries, %d gaps, %d annotated, %d incorrect (%s)",
 		len(report.Entries), report.Summary.GapCount, report.Summary.AnnotatedCount,
 		report.Summary.IncorrectCount, formatDur(time.Since(phaseStart)))
@@ -180,7 +180,7 @@ func (o *Orchestrator) mapControllersConcurrent(
 			start := time.Now()
 			o.log.AgentCall("map", controller.ServiceName)
 
-			mapping, err := tools.MapController(ctx, o.agent, controller, tfResources, o.resultCache, validator)
+			mapping, err := tools.MapController(ctx, o.agent, controller, tfResources, o.resultCache, validator, o.log)
 			done := int(completed.Add(1))
 
 			if err != nil {
@@ -279,7 +279,7 @@ func (o *Orchestrator) analyzeDocsConcurrent(
 				return
 			}
 
-			analyzeResult, err := tools.AnalyzeDoc(ctx, o.agent, dp, string(contentBytes), o.resultCache, validator)
+			analyzeResult, err := tools.AnalyzeDoc(ctx, o.agent, dp, string(contentBytes), o.resultCache, validator, o.log)
 			done := int(completed.Add(1))
 
 			if err != nil {
@@ -402,7 +402,7 @@ func (o *Orchestrator) matchResourcesConcurrent(
 			label := mi.controller.ServiceName + "/" + mi.resource.Kind
 			o.log.AgentCall("match", label)
 
-			matchResult, err := tools.MatchResource(ctx, o.agent, mi.resource, mi.tfFields, mi.controller.ServiceName, o.resultCache, validator)
+			matchResult, err := tools.MatchResource(ctx, o.agent, mi.resource, mi.tfFields, mi.controller.ServiceName, o.resultCache, validator, o.log)
 			done := int(completed.Add(1))
 
 			if err != nil {

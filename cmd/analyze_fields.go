@@ -47,13 +47,14 @@ and identify fields that accept JSON-encoded values (JSON documents or IAM polic
 		}
 
 		// Need discovery results for mappings
-		ghDiscoverer := discovery.NewGitHubDiscoverer(githubToken, repoCache)
+		log := newCmdLogger()
+		ghDiscoverer := discovery.NewGitHubDiscoverer(githubToken, repoCache, log)
 		controllers, err := ghDiscoverer.DiscoverControllers(ctx)
 		if err != nil {
 			return fmt.Errorf("discovering controllers: %w", err)
 		}
 
-		tfResult, err := tools.DiscoverTerraform(ctx, repoCache)
+		tfResult, err := tools.DiscoverTerraform(ctx, repoCache, log)
 		if err != nil {
 			return fmt.Errorf("discovering terraform resources: %w", err)
 		}
@@ -73,7 +74,7 @@ and identify fields that accept JSON-encoded values (JSON documents or IAM polic
 		mapValidator := &agent.JSONValidator{
 			RequiredFields: []string{"mapping"},
 		}
-		mapResult, err := tools.MapAllControllers(ctx, ag, controllers, tfResult.Resources, resultCache, mapValidator)
+		mapResult, err := tools.MapAllControllers(ctx, ag, controllers, tfResult.Resources, resultCache, mapValidator, log)
 		if err != nil {
 			return fmt.Errorf("mapping controllers: %w", err)
 		}
@@ -85,10 +86,14 @@ and identify fields that accept JSON-encoded values (JSON documents or IAM polic
 		}
 
 		// Analyze all mapped docs
+		maxParallel, _ := cmd.Flags().GetInt("max-parallel")
+		if maxParallel <= 0 {
+			maxParallel = tools.DefaultMaxParallel
+		}
 		analyzeValidator := &agent.JSONValidator{
 			RequiredFields: []string{"resource_type", "json_fields"},
 		}
-		result, err := tools.AnalyzeAllDocs(ctx, ag, mapResult.Mappings, repoDir, resultCache, analyzeValidator)
+		result, err := tools.AnalyzeAllDocsParallel(ctx, ag, mapResult.Mappings, repoDir, resultCache, analyzeValidator, maxParallel, log)
 		if err != nil {
 			return fmt.Errorf("analyzing fields: %w", err)
 		}
@@ -115,5 +120,6 @@ and identify fields that accept JSON-encoded values (JSON documents or IAM polic
 
 func init() {
 	analyzeFieldsCmd.Flags().Bool("refresh", false, "Invalidate cache and re-analyze fields")
+	analyzeFieldsCmd.Flags().Int("max-parallel", tools.DefaultMaxParallel, "Maximum number of concurrent agent calls")
 	rootCmd.AddCommand(analyzeFieldsCmd)
 }

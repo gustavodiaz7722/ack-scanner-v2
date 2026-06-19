@@ -2,7 +2,9 @@ package tools
 
 import (
 	"sort"
+	"strings"
 
+	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/logger"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/parser"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/types"
 )
@@ -23,7 +25,12 @@ func GenerateReport(
 	matchResults map[string]*MatchFieldsOutput,
 	controllers []types.ControllerInfo,
 	generatorConfigs map[string]*parser.GeneratorConfig,
+	log ...*logger.Logger,
 ) *types.GapReport {
+	l := resolveLogger(log)
+
+	l.Info("report: generating gap report from %d match results, %d controllers, %d generator configs",
+		len(matchResults), len(controllers), len(generatorConfigs))
 	// Build a lookup from "{service}_{kind}" → (serviceName, resourceKind)
 	type serviceResource struct {
 		ServiceName  string
@@ -77,6 +84,9 @@ func GenerateReport(
 
 	// Build summary
 	summary := buildSummary(entries)
+
+	l.Info("report: %d total entries — %d gaps, %d annotated, %d incorrect",
+		summary.TotalMatches, summary.GapCount, summary.AnnotatedCount, summary.IncorrectCount)
 
 	return &types.GapReport{
 		Entries: entries,
@@ -156,22 +166,48 @@ func RecommendedAnnotationFromFieldType(fieldType string) types.AnnotationType {
 }
 
 // containsIAMPolicyIndicator checks if a TF field name suggests it's an IAM policy.
+// Only matches fields that are specifically IAM policy documents, not fields that
+// merely contain "policy" in their name (e.g., redrivePolicy is a JSON document, not IAM).
 func containsIAMPolicyIndicator(fieldName string) bool {
-	indicators := []string{"policy", "iam_policy", "assume_role_policy", "access_policy"}
-	for _, ind := range indicators {
-		if fieldName == ind || contains(fieldName, ind) {
+	// Exact matches for known IAM policy fields
+	iamPolicyFields := []string{
+		"policy",
+		"assume_role_policy",
+		"access_policy",
+		"key_policy",
+		"resource_policy",
+		"trust_policy",
+		"bucket_policy",
+		"queue_policy",
+		"topic_policy",
+		"repository_policy",
+	}
+	for _, field := range iamPolicyFields {
+		if fieldName == field {
 			return true
 		}
 	}
-	return false
-}
-
-// contains checks if s contains substr (simple helper to avoid importing strings).
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
+	// Suffix pattern: fields ending in _policy are typically IAM resource policies
+	// (e.g., repository_policy, function_policy) but exclude known non-IAM patterns
+	if strings.HasSuffix(fieldName, "_policy") {
+		// Exclude known non-IAM policy fields (these are JSON documents, not IAM)
+		nonIAMPolicies := []string{
+			"redrive_policy",
+			"redrive_allow_policy",
+			"lifecycle_policy",
+			"scaling_policy",
+			"routing_policy",
 		}
+		for _, excluded := range nonIAMPolicies {
+			if fieldName == excluded {
+				return false
+			}
+		}
+		return true
+	}
+	// Prefix pattern: iam_* fields containing policy
+	if strings.HasPrefix(fieldName, "iam_") && strings.Contains(fieldName, "policy") {
+		return true
 	}
 	return false
 }

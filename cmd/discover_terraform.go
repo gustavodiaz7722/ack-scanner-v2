@@ -40,7 +40,8 @@ checkout and enumerates all resource documentation files under website/docs/r/.`
 		}
 
 		// Discover Terraform resources
-		result, err := tools.DiscoverTerraform(ctx, repoCache)
+		log := newCmdLogger()
+		result, err := tools.DiscoverTerraform(ctx, repoCache, log)
 		if err != nil {
 			return fmt.Errorf("discovering terraform resources: %w", err)
 		}

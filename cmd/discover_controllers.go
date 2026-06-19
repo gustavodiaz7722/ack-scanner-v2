@@ -40,7 +40,7 @@ aws-controllers-k8s GitHub organization, parses their CRDs, and extracts string 
 		}
 
 		// Create discoverer
-		discoverer := discovery.NewGitHubDiscoverer(githubToken, repoCache)
+		discoverer := discovery.NewGitHubDiscoverer(githubToken, repoCache, log)
 
 		log.Info("Discovering ACK controllers from GitHub...")
 		controllers, err := discoverer.DiscoverControllers(ctx)
