@@ -147,24 +147,11 @@ func buildMapControllerPrompt(controller types.ControllerInfo, tfResources []typ
 	sb.WriteString("If there is no corresponding Terraform documentation, leave terraform_doc_files as an empty array and provide a no_match_reason.\n")
 	sb.WriteString("Only include Terraform resources that genuinely correspond to this ACK controller.\n\n")
 
-	sb.WriteString("## Required Output JSON Schema\n")
-	sb.WriteString("Respond with ONLY valid JSON matching this exact schema:\n")
-	sb.WriteString("```json\n")
-	sb.WriteString(`{
-  "mapping": {
-    "service_name": "<the ACK controller service name>",
-    "terraform_doc_files": [
-      {
-        "terraform_resource_type": "<e.g. aws_appautoscaling_target>",
-        "doc_file_path": "<exact path from the list above>",
-        "confidence": <0.0 to 1.0>
-      }
-    ],
-    "no_match_reason": "<optional: reason if no TF docs match>"
-  }
-}
-`)
-	sb.WriteString("```\n")
+	sb.WriteString("## Required Output Format\n")
+	sb.WriteString("Respond with ONLY valid JSON (no markdown fences, no explanation, no extra text).\n")
+	sb.WriteString("The JSON must match this schema:\n")
+	sb.WriteString(`{"mapping":{"service_name":"<the ACK controller service name>","terraform_doc_files":[{"terraform_resource_type":"<e.g. aws_appautoscaling_target>","doc_file_path":"<exact path from the list above>","confidence":<0.0 to 1.0>}],"no_match_reason":"<optional: reason if no TF docs match>"}}`)
+	sb.WriteString("\n")
 
 	return sb.String()
 }

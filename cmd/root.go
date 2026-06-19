@@ -89,7 +89,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cacheDir, "cache-dir", "", "Cache directory (default: $HOME/.ack-scanner-v2/cache)")
 	rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "Enable detailed progress logging to stderr")
 	rootCmd.PersistentFlags().StringVar(&output, "output", "table", "Output format: table, json, markdown")
-	rootCmd.PersistentFlags().StringVar(&modelID, "model-id", "anthropic.claude-sonnet-4-20250514-v1:0", "AWS Bedrock model ID to use")
+	rootCmd.PersistentFlags().StringVar(&modelID, "model-id", "us.anthropic.claude-sonnet-4-20250514-v1:0", "AWS Bedrock model ID to use")
 	rootCmd.PersistentFlags().StringVar(&region, "region", "us-east-1", "AWS region for Bedrock")
 	rootCmd.PersistentFlags().StringVar(&invalidate, "invalidate", "", "Invalidate cache for specified tool name (use 'all' to invalidate everything)")
 }

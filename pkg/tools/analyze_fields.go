@@ -196,22 +196,11 @@ func buildAnalyzeFieldsPrompt(docFilePath, docContent string) string {
 	sb.WriteString("- References to aws_iam_policy_document data sources\n\n")
 	sb.WriteString("If no JSON fields are found, return an empty json_fields array.\n\n")
 
-	sb.WriteString("## Required Output JSON Schema\n")
-	sb.WriteString("Respond with ONLY valid JSON matching this exact schema:\n")
-	sb.WriteString("```json\n")
-	sb.WriteString(`{
-  "resource_type": "<the Terraform resource type, e.g. aws_s3_bucket>",
-  "json_fields": [
-    {
-      "field_name": "<name of the field>",
-      "field_type": "<one of: json_document, iam_policy>",
-      "confidence": <number between 0.0 and 1.0>,
-      "reasoning": "<brief explanation of why this field accepts JSON>"
-    }
-  ]
-}
-`)
-	sb.WriteString("```\n")
+	sb.WriteString("## Required Output Format\n")
+	sb.WriteString("Respond with ONLY valid JSON (no markdown fences, no explanation, no extra text).\n")
+	sb.WriteString("The JSON must match this schema:\n")
+	sb.WriteString(`{"resource_type":"<the Terraform resource type, e.g. aws_s3_bucket>","json_fields":[{"field_name":"<name of the field>","field_type":"<one of: json_document, iam_policy>","confidence":<0.0 to 1.0>,"reasoning":"<brief explanation>"}]}`)
+	sb.WriteString("\nIf no JSON fields are found, return an empty json_fields array.\n")
 
 	return sb.String()
 }

@@ -254,23 +254,11 @@ func buildMatchFieldsPrompt(resource types.ResourceInfo, tfJSONFields []types.JS
 	sb.WriteString("If a Terraform field has no corresponding ACK field, include it in the unmatched list.\n")
 	sb.WriteString("Every Terraform JSON field must appear either in matches or in unmatched_tf_fields.\n\n")
 
-	sb.WriteString("## Required Output JSON Schema\n")
-	sb.WriteString("Respond with ONLY valid JSON matching this exact schema:\n")
-	sb.WriteString("```json\n")
-	sb.WriteString(`{
-  "matches": [
-    {
-      "terraform_field_name": "<name of the TF field>",
-      "ack_field_name": "<name of the matched ACK field>",
-      "ack_field_path": "<full dot-separated path of the ACK field>",
-      "confidence": <number between 0.0 and 1.0>,
-      "alternatives": ["<optional alternative ACK field names>"]
-    }
-  ],
-  "unmatched_tf_fields": ["<TF field names with no ACK match>"]
-}
-`)
-	sb.WriteString("```\n")
+	sb.WriteString("## Required Output Format\n")
+	sb.WriteString("Respond with ONLY valid JSON (no markdown fences, no explanation, no extra text).\n")
+	sb.WriteString("The JSON must match this schema:\n")
+	sb.WriteString(`{"matches":[{"terraform_field_name":"<name of the TF field>","ack_field_name":"<name of the matched ACK field>","ack_field_path":"<full dot-separated path of the ACK field>","confidence":<0.0 to 1.0>,"alternatives":["<optional>"]}],"unmatched_tf_fields":["<TF field names with no ACK match>"]}`)
+	sb.WriteString("\n")
 
 	return sb.String()
 }
