@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/cache"
+	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -97,4 +98,12 @@ func init() {
 // Execute runs the root command.
 func Execute() error {
 	return rootCmd.Execute()
+}
+
+// newCmdLogger creates a logger appropriate for the current verbosity level.
+func newCmdLogger() *logger.Logger {
+	if verbose {
+		return logger.New(logger.LevelInfo, true)
+	}
+	return logger.New(logger.LevelWarn, true)
 }

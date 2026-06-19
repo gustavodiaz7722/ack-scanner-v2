@@ -6,12 +6,15 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/agent"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/cache"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/discovery"
+	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/logger"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/parser"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/reporter"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/tools"
@@ -27,85 +30,119 @@ type Orchestrator struct {
 	agent       *agent.Agent
 	repoCache   *cache.RepoCache
 	resultCache *cache.ResultCache
-	verbose     bool
+	log         *logger.Logger
 	maxParallel int
 }
 
-// RunFullScan executes the complete workflow:
-// Phase 1: Discover controllers (local)
-// Phase 2: Discover Terraform (local, sparse clone)
-// Phase 3: Map controllers (agent, per-controller, cached)
-// Phase 4: Analyze TF docs (agent, per-doc, cached)
-// Phase 5: Match resources (agent, per-resource, cached)
-// Phase 6: Generate report (local)
+// RunFullScan executes the complete workflow.
 func (o *Orchestrator) RunFullScan(ctx context.Context) (*types.GapReport, error) {
+	scanStart := time.Now()
+
 	// Phase 1: Discover controllers
-	o.logPhase(1, "Discovering ACK controllers...")
+	o.log.PhaseStart(1, "Discovering ACK controllers")
+	phaseStart := time.Now()
 	ghDiscoverer := discovery.NewGitHubDiscoverer(githubToken, o.repoCache)
 	controllers, err := ghDiscoverer.DiscoverControllers(ctx)
 	if err != nil {
+		o.log.Error("discovery failed: %v", err)
 		return nil, fmt.Errorf("phase 1: discovering controllers: %w", err)
 	}
-	o.logProgress(1, "Discovered %d controllers", len(controllers))
+	totalFields := 0
+	for _, c := range controllers {
+		for _, r := range c.Resources {
+			totalFields += len(r.StringFields)
+		}
+	}
+	o.log.PhaseComplete(1, "Found %d controllers, %d resources, %d string fields (%s)",
+		len(controllers), countResources(controllers), totalFields, formatDur(time.Since(phaseStart)))
 
 	// Phase 2: Discover Terraform resources
-	o.logPhase(2, "Discovering Terraform resources...")
+	o.log.PhaseStart(2, "Discovering Terraform resources")
+	phaseStart = time.Now()
 	tfResult, err := tools.DiscoverTerraform(ctx, o.repoCache)
 	if err != nil {
+		o.log.Error("terraform discovery failed: %v", err)
 		return nil, fmt.Errorf("phase 2: discovering terraform resources: %w", err)
 	}
-	o.logProgress(2, "Discovered %d Terraform resources", len(tfResult.Resources))
+	o.log.PhaseComplete(2, "Found %d Terraform resource docs (%s)",
+		len(tfResult.Resources), formatDur(time.Since(phaseStart)))
 
-	// Phase 3: Map controllers to Terraform docs (bounded concurrency)
-	o.logPhase(3, "Mapping controllers to Terraform docs...")
-	mapValidator := &agent.JSONValidator{
-		RequiredFields: []string{"mapping"},
-	}
+	// Phase 3: Map controllers to Terraform docs
+	o.log.PhaseStart(3, "Mapping controllers → Terraform docs (agent)")
+	phaseStart = time.Now()
+	mapValidator := &agent.JSONValidator{RequiredFields: []string{"mapping"}}
 	mapResult, err := o.mapControllersConcurrent(ctx, controllers, tfResult.Resources, mapValidator)
 	if err != nil {
+		o.log.Error("mapping failed: %v", err)
 		return nil, fmt.Errorf("phase 3: mapping controllers: %w", err)
 	}
-	o.logProgress(3, "Mapped %d controllers (%d skipped)", len(mapResult.Mappings), len(mapResult.Skipped))
+	o.log.PhaseComplete(3, "Mapped %d controllers, %d skipped (%s)",
+		len(mapResult.Mappings), len(mapResult.Skipped), formatDur(time.Since(phaseStart)))
 
-	// Phase 4: Analyze TF docs (bounded concurrency)
-	o.logPhase(4, "Analyzing Terraform documentation for JSON fields...")
+	// Phase 4: Analyze TF docs for JSON fields
+	o.log.PhaseStart(4, "Analyzing Terraform docs for JSON fields (agent)")
+	phaseStart = time.Now()
 	repoDir, err := o.repoCache.EnsureRepoSparse("hashicorp", "terraform-provider-aws", []string{"website/docs/r"})
 	if err != nil {
+		o.log.Error("terraform repo clone failed: %v", err)
 		return nil, fmt.Errorf("phase 4: ensuring terraform repo: %w", err)
 	}
-	analyzeValidator := &agent.JSONValidator{
-		RequiredFields: []string{"resource_type", "json_fields"},
-	}
+	analyzeValidator := &agent.JSONValidator{RequiredFields: []string{"resource_type", "json_fields"}}
 	analysisResult, err := o.analyzeDocsConcurrent(ctx, mapResult.Mappings, repoDir, analyzeValidator)
 	if err != nil {
+		o.log.Error("analysis failed: %v", err)
 		return nil, fmt.Errorf("phase 4: analyzing fields: %w", err)
 	}
-	o.logProgress(4, "Analyzed %d docs (%d skipped)", len(analysisResult.Results), len(analysisResult.Skipped))
-
-	// Phase 5: Match resources (bounded concurrency)
-	o.logPhase(5, "Matching ACK fields against Terraform JSON fields...")
-	matchValidator := &agent.JSONValidator{
-		RequiredFields: []string{"matches", "unmatched_tf_fields"},
+	totalJSONFields := 0
+	for _, r := range analysisResult.Results {
+		totalJSONFields += len(r.JSONFields)
 	}
+	o.log.PhaseComplete(4, "Analyzed %d docs, found %d JSON fields, %d skipped (%s)",
+		len(analysisResult.Results), totalJSONFields, len(analysisResult.Skipped), formatDur(time.Since(phaseStart)))
+
+	// Phase 5: Match ACK fields against TF JSON fields
+	o.log.PhaseStart(5, "Matching ACK fields ↔ Terraform JSON fields (agent)")
+	phaseStart = time.Now()
+	matchValidator := &agent.JSONValidator{RequiredFields: []string{"matches", "unmatched_tf_fields"}}
 	matchResult, err := o.matchResourcesConcurrent(ctx, controllers, analysisResult, mapResult.Mappings, matchValidator)
 	if err != nil {
+		o.log.Error("matching failed: %v", err)
 		return nil, fmt.Errorf("phase 5: matching fields: %w", err)
 	}
-	o.logProgress(5, "Matched %d resources (%d skipped)", len(matchResult.Results), len(matchResult.Skipped))
+	totalMatches := 0
+	for _, r := range matchResult.Results {
+		totalMatches += len(r.Matches)
+	}
+	o.log.PhaseComplete(5, "Matched %d resources, %d field matches, %d skipped (%s)",
+		len(matchResult.Results), totalMatches, len(matchResult.Skipped), formatDur(time.Since(phaseStart)))
 
 	// Phase 6: Generate report
-	o.logPhase(6, "Generating gap report...")
+	o.log.PhaseStart(6, "Generating gap report")
+	phaseStart = time.Now()
 	generatorConfigs := o.loadGeneratorConfigs(controllers)
 	report := tools.GenerateReport(matchResult.Results, controllers, generatorConfigs)
-	o.logProgress(6, "Report generated: %d entries, %d gaps", len(report.Entries), report.Summary.GapCount)
+	o.log.PhaseComplete(6, "Report: %d entries, %d gaps, %d annotated, %d incorrect (%s)",
+		len(report.Entries), report.Summary.GapCount, report.Summary.AnnotatedCount,
+		report.Summary.IncorrectCount, formatDur(time.Since(phaseStart)))
 
-	// Report skipped items summary
-	o.reportSkipped(mapResult.Skipped, analysisResult.Skipped, matchResult.Skipped)
+	// Final summary
+	o.log.Summary(time.Since(scanStart), map[string]int{
+		"Controllers discovered": len(controllers),
+		"Terraform resources":    len(tfResult.Resources),
+		"Controllers mapped":     len(mapResult.Mappings),
+		"Docs analyzed":          len(analysisResult.Results),
+		"Resources matched":      len(matchResult.Results),
+		"Total field matches":    totalMatches,
+		"Gaps (need annotation)": report.Summary.GapCount,
+		"Already annotated":      report.Summary.AnnotatedCount,
+		"Incorrect annotations":  report.Summary.IncorrectCount,
+		"Items skipped (errors)": len(mapResult.Skipped) + len(analysisResult.Skipped) + len(matchResult.Skipped),
+	})
 
 	return report, nil
 }
 
-// mapControllersConcurrent maps controllers to TF docs with bounded concurrency.
+// mapControllersConcurrent maps controllers with bounded concurrency.
 func (o *Orchestrator) mapControllersConcurrent(
 	ctx context.Context,
 	controllers []types.ControllerInfo,
@@ -114,6 +151,7 @@ func (o *Orchestrator) mapControllersConcurrent(
 ) (*tools.MapAllControllersOutput, error) {
 	output := &tools.MapAllControllersOutput{}
 	total := len(controllers)
+	var completed atomic.Int32
 
 	type result struct {
 		mapping *types.ControllerMapping
@@ -139,28 +177,36 @@ func (o *Orchestrator) mapControllersConcurrent(
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			o.logItemProgress(3, idx+1, total, "mapping %s", controller.ServiceName)
+			start := time.Now()
+			o.log.AgentCall("map", controller.ServiceName)
 
 			mapping, err := tools.MapController(ctx, o.agent, controller, tfResources, o.resultCache, validator)
+			done := int(completed.Add(1))
+
 			if err != nil {
 				if err == agent.ErrSkipItem {
+					o.log.Skip(controller.ServiceName, "validation failed after retries")
 					results[idx] = result{skipped: controller.ServiceName, index: idx}
-					return
+				} else {
+					o.log.Error("mapping %s: %v", controller.ServiceName, err)
+					results[idx] = result{err: err, index: idx}
 				}
-				results[idx] = result{err: fmt.Errorf("mapping controller %q: %w", controller.ServiceName, err), index: idx}
+				o.log.Progress(done, total, "mapping controllers")
 				return
 			}
+
+			numDocs := len(mapping.TFDocFiles)
+			o.log.AgentResult(controller.ServiceName, time.Since(start), numDocs)
+			o.log.Progress(done, total, "mapping controllers")
 			results[idx] = result{mapping: mapping, index: idx}
 		}(i, ctrl)
 	}
 
 	wg.Wait()
 
-	for _, r := range results {
+	for i, r := range results {
 		if r.err != nil {
-			// Log error, skip, continue (partial failure)
-			fmt.Fprintf(os.Stderr, "[phase 3/6] error: %v (skipping)\n", r.err)
-			output.Skipped = append(output.Skipped, controllers[r.index].ServiceName)
+			output.Skipped = append(output.Skipped, controllers[i].ServiceName)
 		} else if r.skipped != "" {
 			output.Skipped = append(output.Skipped, r.skipped)
 		} else if r.mapping != nil {
@@ -182,7 +228,6 @@ func (o *Orchestrator) analyzeDocsConcurrent(
 		Results: make(map[string]*tools.AnalyzeFieldsOutput),
 	}
 
-	// Collect unique doc file paths from all mappings
 	seen := make(map[string]bool)
 	var docPaths []string
 	for _, mapping := range mappings {
@@ -195,6 +240,7 @@ func (o *Orchestrator) analyzeDocsConcurrent(
 	}
 
 	total := len(docPaths)
+	var completed atomic.Int32
 
 	type result struct {
 		docPath string
@@ -220,25 +266,37 @@ func (o *Orchestrator) analyzeDocsConcurrent(
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			o.logItemProgress(4, idx+1, total, "analyzing %s", filepath.Base(dp))
+			start := time.Now()
+			docName := filepath.Base(dp)
+			o.log.AgentCall("analyze", docName)
 
-			// Read the doc content
 			fullPath := filepath.Join(repoDir, dp)
 			contentBytes, err := os.ReadFile(fullPath)
 			if err != nil {
-				results[idx] = result{docPath: dp, err: fmt.Errorf("reading %s: %w", dp, err)}
+				o.log.Skip(docName, fmt.Sprintf("read error: %v", err))
+				results[idx] = result{docPath: dp, err: err}
+				completed.Add(1)
 				return
 			}
 
 			analyzeResult, err := tools.AnalyzeDoc(ctx, o.agent, dp, string(contentBytes), o.resultCache, validator)
+			done := int(completed.Add(1))
+
 			if err != nil {
 				if err == agent.ErrSkipItem {
+					o.log.Skip(docName, "validation failed")
 					results[idx] = result{docPath: dp, skipped: true}
-					return
+				} else {
+					o.log.Error("analyzing %s: %v", docName, err)
+					results[idx] = result{docPath: dp, err: err}
 				}
-				results[idx] = result{docPath: dp, err: err}
+				o.log.Progress(done, total, "analyzing docs")
 				return
 			}
+
+			numFields := len(analyzeResult.JSONFields)
+			o.log.AgentResult(docName, time.Since(start), numFields)
+			o.log.Progress(done, total, "analyzing docs")
 			results[idx] = result{docPath: dp, output: analyzeResult}
 		}(i, docPath)
 	}
@@ -247,7 +305,6 @@ func (o *Orchestrator) analyzeDocsConcurrent(
 
 	for _, r := range results {
 		if r.err != nil {
-			fmt.Fprintf(os.Stderr, "[phase 4/6] error: %v (skipping %s)\n", r.err, r.docPath)
 			output.Skipped = append(output.Skipped, r.docPath)
 		} else if r.skipped {
 			output.Skipped = append(output.Skipped, r.docPath)
@@ -259,7 +316,7 @@ func (o *Orchestrator) analyzeDocsConcurrent(
 	return output, nil
 }
 
-// matchResourcesConcurrent matches ACK resources against TF JSON fields with bounded concurrency.
+// matchResourcesConcurrent matches resources with bounded concurrency.
 func (o *Orchestrator) matchResourcesConcurrent(
 	ctx context.Context,
 	controllers []types.ControllerInfo,
@@ -271,7 +328,6 @@ func (o *Orchestrator) matchResourcesConcurrent(
 		Results: make(map[string]*tools.MatchFieldsOutput),
 	}
 
-	// Build a lookup from doc file path to its analyzed JSON fields
 	docFieldsMap := make(map[string][]types.JSONFieldInfo)
 	for docPath, analysis := range analysisResults.Results {
 		if analysis != nil {
@@ -279,7 +335,6 @@ func (o *Orchestrator) matchResourcesConcurrent(
 		}
 	}
 
-	// Build a lookup from service name to its mapped TF doc paths
 	serviceMappings := make(map[string][]string)
 	for _, mapping := range mappings {
 		for _, entry := range mapping.TFDocFiles {
@@ -287,7 +342,6 @@ func (o *Orchestrator) matchResourcesConcurrent(
 		}
 	}
 
-	// Collect all (controller, resource) pairs that have TF JSON fields to match
 	type matchItem struct {
 		controller types.ControllerInfo
 		resource   types.ResourceInfo
@@ -318,6 +372,7 @@ func (o *Orchestrator) matchResourcesConcurrent(
 	}
 
 	total := len(items)
+	var completed atomic.Int32
 
 	type result struct {
 		itemKey string
@@ -343,17 +398,28 @@ func (o *Orchestrator) matchResourcesConcurrent(
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			o.logItemProgress(5, idx+1, total, "matching %s/%s", mi.controller.ServiceName, mi.resource.Kind)
+			start := time.Now()
+			label := mi.controller.ServiceName + "/" + mi.resource.Kind
+			o.log.AgentCall("match", label)
 
 			matchResult, err := tools.MatchResource(ctx, o.agent, mi.resource, mi.tfFields, mi.controller.ServiceName, o.resultCache, validator)
+			done := int(completed.Add(1))
+
 			if err != nil {
 				if err == agent.ErrSkipItem {
+					o.log.Skip(label, "validation failed")
 					results[idx] = result{itemKey: mi.itemKey, skipped: true}
-					return
+				} else {
+					o.log.Error("matching %s: %v", label, err)
+					results[idx] = result{itemKey: mi.itemKey, err: err}
 				}
-				results[idx] = result{itemKey: mi.itemKey, err: err}
+				o.log.Progress(done, total, "matching resources")
 				return
 			}
+
+			numMatches := len(matchResult.Matches)
+			o.log.AgentResult(label, time.Since(start), numMatches)
+			o.log.Progress(done, total, "matching resources")
 			results[idx] = result{itemKey: mi.itemKey, output: matchResult}
 		}(i, item)
 	}
@@ -362,7 +428,6 @@ func (o *Orchestrator) matchResourcesConcurrent(
 
 	for _, r := range results {
 		if r.err != nil {
-			fmt.Fprintf(os.Stderr, "[phase 5/6] error: %v (skipping %s)\n", r.err, r.itemKey)
 			output.Skipped = append(output.Skipped, r.itemKey)
 		} else if r.skipped {
 			output.Skipped = append(output.Skipped, r.itemKey)
@@ -380,17 +445,13 @@ func (o *Orchestrator) loadGeneratorConfigs(controllers []types.ControllerInfo) 
 	for _, ctrl := range controllers {
 		repoDir, err := o.repoCache.EnsureRepo(discovery.ACKOrg, ctrl.RepoName)
 		if err != nil {
-			if o.verbose {
-				fmt.Fprintf(os.Stderr, "  warning: could not access repo %s: %v\n", ctrl.RepoName, err)
-			}
+			o.log.Debug("could not access repo %s: %v", ctrl.RepoName, err)
 			continue
 		}
 		genPath := filepath.Join(repoDir, "generator.yaml")
 		genConfig, err := parser.ParseGeneratorConfig(genPath)
 		if err != nil {
-			if o.verbose {
-				fmt.Fprintf(os.Stderr, "  warning: could not parse generator.yaml for %s: %v\n", ctrl.ServiceName, err)
-			}
+			o.log.Debug("could not parse generator.yaml for %s: %v", ctrl.ServiceName, err)
 			continue
 		}
 		generatorConfigs[ctrl.ServiceName] = genConfig
@@ -398,55 +459,24 @@ func (o *Orchestrator) loadGeneratorConfigs(controllers []types.ControllerInfo) 
 	return generatorConfigs
 }
 
-// reportSkipped logs a summary of skipped items from all phases.
-func (o *Orchestrator) reportSkipped(mapSkipped, analyzeSkipped, matchSkipped []string) {
-	totalSkipped := len(mapSkipped) + len(analyzeSkipped) + len(matchSkipped)
-	if totalSkipped == 0 {
-		return
+// --- Helpers ---
+
+func countResources(controllers []types.ControllerInfo) int {
+	n := 0
+	for _, c := range controllers {
+		n += len(c.Resources)
 	}
-	fmt.Fprintf(os.Stderr, "\n[scan] %d items skipped due to errors:\n", totalSkipped)
-	if len(mapSkipped) > 0 {
-		fmt.Fprintf(os.Stderr, "  Phase 3 (map controllers): %d skipped\n", len(mapSkipped))
-		for _, s := range mapSkipped {
-			fmt.Fprintf(os.Stderr, "    - %s\n", s)
-		}
-	}
-	if len(analyzeSkipped) > 0 {
-		fmt.Fprintf(os.Stderr, "  Phase 4 (analyze docs): %d skipped\n", len(analyzeSkipped))
-		for _, s := range analyzeSkipped {
-			fmt.Fprintf(os.Stderr, "    - %s\n", s)
-		}
-	}
-	if len(matchSkipped) > 0 {
-		fmt.Fprintf(os.Stderr, "  Phase 5 (match resources): %d skipped\n", len(matchSkipped))
-		for _, s := range matchSkipped {
-			fmt.Fprintf(os.Stderr, "    - %s\n", s)
-		}
-	}
+	return n
 }
 
-// logPhase logs the start of a scan phase.
-func (o *Orchestrator) logPhase(phase int, format string, args ...interface{}) {
-	if o.verbose {
-		msg := fmt.Sprintf(format, args...)
-		fmt.Fprintf(os.Stderr, "[phase %d/6] %s\n", phase, msg)
+func formatDur(d time.Duration) string {
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
 	}
-}
-
-// logProgress logs progress for a scan phase.
-func (o *Orchestrator) logProgress(phase int, format string, args ...interface{}) {
-	if o.verbose {
-		msg := fmt.Sprintf(format, args...)
-		fmt.Fprintf(os.Stderr, "[phase %d/6] %s\n", phase, msg)
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
 	}
-}
-
-// logItemProgress logs per-item progress within a phase.
-func (o *Orchestrator) logItemProgress(phase, current, total int, format string, args ...interface{}) {
-	if o.verbose {
-		msg := fmt.Sprintf(format, args...)
-		fmt.Fprintf(os.Stderr, "[phase %d/6] (%d/%d) %s\n", phase, current, total, msg)
-	}
+	return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
 }
 
 // scanCmd is the scan subcommand.
@@ -472,6 +502,17 @@ skipping failed items, and reporting skipped items at the end.`,
 			maxParallel = DefaultMaxParallel
 		}
 
+		// Set up logger
+		logLevel := logger.LevelWarn
+		if verbose {
+			logLevel = logger.LevelInfo
+		}
+		debug, _ := cmd.Flags().GetBool("debug")
+		if debug {
+			logLevel = logger.LevelDebug
+		}
+		log := logger.New(logLevel, true)
+
 		// Create caches
 		repoCache, err := cache.NewRepoCache(cacheDir + "/repos")
 		if err != nil {
@@ -484,6 +525,7 @@ skipping failed items, and reporting skipped items at the end.`,
 		}
 
 		// Create Bedrock client and agent
+		log.Info("Connecting to AWS Bedrock in %s...", region)
 		bedrockClient, err := agent.NewBedrockClient(ctx, region)
 		if err != nil {
 			return fmt.Errorf("creating bedrock client: %w", err)
@@ -494,12 +536,15 @@ skipping failed items, and reporting skipped items at the end.`,
 			return fmt.Errorf("creating agent: %w", err)
 		}
 
+		log.Info("Using model: %s", modelID)
+		log.Info("Max parallel agent calls: %d", maxParallel)
+
 		// Create orchestrator
 		orch := &Orchestrator{
 			agent:       ag,
 			repoCache:   repoCache,
 			resultCache: resultCache,
-			verbose:     verbose,
+			log:         log,
 			maxParallel: maxParallel,
 		}
 
@@ -516,5 +561,6 @@ skipping failed items, and reporting skipped items at the end.`,
 
 func init() {
 	scanCmd.Flags().Int("max-parallel", DefaultMaxParallel, "Maximum number of concurrent agent calls (default 3)")
+	scanCmd.Flags().Bool("debug", false, "Enable debug-level logging (includes cache hits, token counts)")
 	rootCmd.AddCommand(scanCmd)
 }

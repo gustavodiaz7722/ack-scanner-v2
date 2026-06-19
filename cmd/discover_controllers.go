@@ -23,6 +23,8 @@ aws-controllers-k8s GitHub organization, parses their CRDs, and extracts string 
 
 		refresh, _ := cmd.Flags().GetBool("refresh")
 
+		log := newCmdLogger()
+
 		// Create repo cache
 		repoCache, err := cache.NewRepoCache(cacheDir + "/repos")
 		if err != nil {
@@ -31,9 +33,7 @@ aws-controllers-k8s GitHub organization, parses their CRDs, and extracts string 
 
 		// Invalidate repo cache if refresh requested
 		if refresh {
-			if verbose {
-				fmt.Fprintln(os.Stderr, "refreshing: invalidating controller discovery cache")
-			}
+			log.Info("Invalidating controller discovery cache...")
 			if err := repoCache.InvalidateAll(); err != nil {
 				return fmt.Errorf("invalidating repo cache: %w", err)
 			}
@@ -42,11 +42,19 @@ aws-controllers-k8s GitHub organization, parses their CRDs, and extracts string 
 		// Create discoverer
 		discoverer := discovery.NewGitHubDiscoverer(githubToken, repoCache)
 
-		// Discover controllers
+		log.Info("Discovering ACK controllers from GitHub...")
 		controllers, err := discoverer.DiscoverControllers(ctx)
 		if err != nil {
 			return fmt.Errorf("discovering controllers: %w", err)
 		}
+
+		totalFields := 0
+		for _, ctrl := range controllers {
+			for _, res := range ctrl.Resources {
+				totalFields += len(res.StringFields)
+			}
+		}
+		log.PhaseComplete(1, "Found %d controllers with %d string fields", len(controllers), totalFields)
 
 		// Format output
 		switch output {
