@@ -116,41 +116,22 @@ func (o *Orchestrator) RunFullScan(ctx context.Context) (*ScanResult, error) {
 		o.log.PhaseComplete(4, "Skipped (--skip-references)")
 	}
 
-	// Phase 5: Map controllers → Terraform docs for JSON fields
+	// Phase 5: Map controllers → Terraform docs (shared by both pipelines)
 	var jsonMapResult *tools.MapAllControllersOutput
-	if !o.skipJSONFields {
-		o.log.PhaseStart(5, "Mapping controllers → Terraform docs for JSON fields (agent)")
+	if !o.skipJSONFields || !o.skipReferences {
+		o.log.PhaseStart(5, "Mapping controllers → Terraform docs (agent)")
 		phaseStart = time.Now()
 		mapValidator := &agent.JSONValidator{RequiredFields: []string{"mapping"}}
 		jsonMapResult, err = o.mapControllersConcurrent(ctx, controllers, tfResult.Resources, mapValidator)
 		if err != nil {
 			o.log.Error("mapping failed: %v", err)
-			return nil, fmt.Errorf("phase 5: mapping controllers for json fields: %w", err)
+			return nil, fmt.Errorf("phase 5: mapping controllers to terraform docs: %w", err)
 		}
 		o.log.PhaseComplete(5, "Mapped %d controllers, %d skipped (%s)",
 			len(jsonMapResult.Mappings), len(jsonMapResult.Skipped), formatDur(time.Since(phaseStart)))
 	} else {
-		o.log.PhaseStart(5, "Mapping controllers → Terraform docs for JSON fields (skipped)")
-		o.log.PhaseComplete(5, "Skipped (--skip-json-fields)")
-	}
-
-	// Phase 6: Map controllers → Terraform docs for references (separate agent calls)
-	var tfRefMapResult *tools.MapAllTerraformRefsOutput
-	if !o.skipReferences {
-		o.log.PhaseStart(6, "Mapping controllers → Terraform docs for references (agent)")
-		phaseStart = time.Now()
-		tfRefMapValidator := &agent.JSONValidator{RequiredFields: []string{"service_name"}}
-		tfRefMapResult, err = tools.MapAllControllersToTerraformRefs(
-			ctx, o.agent, controllers, tfResult.Resources, o.resultCache, tfRefMapValidator, o.maxParallel, o.log)
-		if err != nil {
-			o.log.Error("terraform ref mapping failed: %v", err)
-			return nil, fmt.Errorf("phase 6: mapping controllers for tf refs: %w", err)
-		}
-		o.log.PhaseComplete(6, "Mapped %d controllers, %d skipped (%s)",
-			len(tfRefMapResult.Mappings), len(tfRefMapResult.Skipped), formatDur(time.Since(phaseStart)))
-	} else {
-		o.log.PhaseStart(6, "Mapping controllers → Terraform docs for references (skipped)")
-		o.log.PhaseComplete(6, "Skipped (--skip-references)")
+		o.log.PhaseStart(5, "Mapping controllers → Terraform docs (skipped)")
+		o.log.PhaseComplete(5, "Skipped (both pipelines disabled)")
 	}
 
 	// Phase 7: Map controllers → Upjet configs (agent)
@@ -233,7 +214,7 @@ func (o *Orchestrator) RunFullScan(ctx context.Context) (*ScanResult, error) {
 		}
 		tfRefAnalyzeValidator := &agent.JSONValidator{RequiredFields: []string{"resource_type", "references"}}
 		tfRefAnalysisResult, err = tools.AnalyzeAllTerraformRefs(
-			ctx, o.agent, tfRefMapResult.Mappings, repoDir, o.resultCache, tfRefAnalyzeValidator, o.maxParallel, o.log)
+			ctx, o.agent, jsonMapResult.Mappings, repoDir, o.resultCache, tfRefAnalyzeValidator, o.maxParallel, o.log)
 		if err != nil {
 			o.log.Error("terraform ref analysis failed: %v", err)
 			return nil, fmt.Errorf("phase 10: analyzing terraform refs: %w", err)
@@ -335,7 +316,7 @@ func (o *Orchestrator) RunFullScan(ctx context.Context) (*ScanResult, error) {
 		tfRefMatchValidator := &agent.JSONValidator{RequiredFields: []string{"matches", "unmatched_tf_fields"}}
 		tfRefMatchResult, err = tools.MatchAllResourcesTerraformRefs(
 			ctx, o.agent, controllers, convertTFRefAnalysisResults(tfRefAnalysisResult),
-			tfRefMapResult.Mappings, o.resultCache, tfRefMatchValidator, o.maxParallel, o.log)
+			jsonMapResult.Mappings, o.resultCache, tfRefMatchValidator, o.maxParallel, o.log)
 		if err != nil {
 			o.log.Error("tf ref matching failed: %v", err)
 			return nil, fmt.Errorf("phase 14: matching terraform refs: %w", err)

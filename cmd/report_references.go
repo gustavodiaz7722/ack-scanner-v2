@@ -141,7 +141,7 @@ The report prioritizes fields by confidence and source agreement.`,
 		}
 
 		mapTFRefsValidator := &agent.JSONValidator{RequiredFields: []string{"terraform_doc_files"}}
-		tfRefMappings, err := tools.MapAllControllersToTerraformRefs(ctx, ag, controllers, tfResult.Resources, resultCache, mapTFRefsValidator, maxParallel, log)
+		tfRefMappings, err := tools.MapAllControllersParallel(ctx, ag, controllers, tfResult.Resources, resultCache, mapTFRefsValidator, maxParallel, log)
 		if err != nil {
 			return fmt.Errorf("mapping controllers to terraform refs: %w", err)
 		}

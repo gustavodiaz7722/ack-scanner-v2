@@ -516,4 +516,3 @@ func TestUpjetMapping_JSONRoundTrip(t *testing.T) {
 	}
 }
 
-// contains and containsSubstr helpers are defined in map_terraform_refs_test.go

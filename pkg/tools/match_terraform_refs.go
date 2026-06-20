@@ -85,7 +85,7 @@ func MatchAllResourcesTerraformRefs(
 	ag *agent.Agent,
 	controllers []types.ControllerInfo,
 	analysisResults map[string]*AnalyzeTerraformRefsOutput,
-	mappings []TerraformRefMapping,
+	mappings []types.ControllerMapping,
 	resultCache *cache.ResultCache,
 	validator agent.ResponseValidator,
 	maxParallel int,

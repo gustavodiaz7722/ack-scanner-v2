@@ -12,6 +12,7 @@ import (
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/cache"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/framework"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/logger"
+	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/types"
 )
 
 const analyzeTerraformRefsTool = "analyze_terraform_refs"
@@ -81,13 +82,12 @@ func AnalyzeTerraformRefs(
 }
 
 // AnalyzeAllTerraformRefs orchestrates analyzing all mapped Terraform documentation
-// files for cross-resource references. It uses the reference-pipeline's own mapping
-// results (TerraformRefMapping from map_terraform_refs) and reads each doc from the
-// local Terraform repo directory.
+// files for cross-resource references. It uses the controller mapping results and
+// reads each doc from the local Terraform repo directory.
 func AnalyzeAllTerraformRefs(
 	ctx context.Context,
 	ag *agent.Agent,
-	mappings []TerraformRefMapping,
+	mappings []types.ControllerMapping,
 	repoDir string,
 	resultCache *cache.ResultCache,
 	validator agent.ResponseValidator,

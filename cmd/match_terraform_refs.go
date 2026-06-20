@@ -86,7 +86,7 @@ existing references are excluded from matching.`,
 		mapValidator := &agent.JSONValidator{
 			RequiredFields: []string{"mapping"},
 		}
-		mapResult, err := tools.MapAllControllersToTerraformRefs(ctx, ag, controllers, tfResult.Resources, resultCache, mapValidator, maxParallel, log)
+		mapResult, err := tools.MapAllControllersParallel(ctx, ag, controllers, tfResult.Resources, resultCache, mapValidator, maxParallel, log)
 		if err != nil {
 			return fmt.Errorf("mapping controllers to terraform refs: %w", err)
 		}

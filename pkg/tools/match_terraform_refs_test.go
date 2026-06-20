@@ -381,16 +381,16 @@ func TestMatchAllResourcesTerraformRefs_Success(t *testing.T) {
 		},
 	}
 
-	mappings := []TerraformRefMapping{
+	mappings := []types.ControllerMapping{
 		{
 			ServiceName: "ebs",
-			TFDocFiles: []TerraformRefMappingEntry{
+			TFDocFiles: []types.MappingEntry{
 				{TFResourceType: "aws_ebs_snapshot", DocFilePath: "website/docs/r/ebs_snapshot.html.markdown", Confidence: 0.95},
 			},
 		},
 		{
 			ServiceName: "ec2",
-			TFDocFiles: []TerraformRefMappingEntry{
+			TFDocFiles: []types.MappingEntry{
 				{TFResourceType: "aws_instance", DocFilePath: "website/docs/r/instance.html.markdown", Confidence: 0.9},
 			},
 		},
@@ -456,10 +456,10 @@ func TestMatchAllResourcesTerraformRefs_FiltersAnnotatedFields(t *testing.T) {
 		},
 	}
 
-	mappings := []TerraformRefMapping{
+	mappings := []types.ControllerMapping{
 		{
 			ServiceName: "ec2",
-			TFDocFiles: []TerraformRefMappingEntry{
+			TFDocFiles: []types.MappingEntry{
 				{TFResourceType: "aws_instance", DocFilePath: "website/docs/r/instance.html.markdown", Confidence: 0.9},
 			},
 		},
@@ -488,10 +488,10 @@ func TestMatchAllResourcesTerraformRefs_EmptyAnalysisResults(t *testing.T) {
 		},
 	}
 
-	mappings := []TerraformRefMapping{
+	mappings := []types.ControllerMapping{
 		{
 			ServiceName: "ec2",
-			TFDocFiles: []TerraformRefMappingEntry{
+			TFDocFiles: []types.MappingEntry{
 				{TFResourceType: "aws_instance", DocFilePath: "website/docs/r/instance.html.markdown", Confidence: 0.9},
 			},
 		},
@@ -539,10 +539,10 @@ func TestMatchAllResourcesTerraformRefs_Parallel(t *testing.T) {
 		"svc2_res": {References: []TerraformReferenceInfo{{FieldName: "field_2", TargetResource: "aws_svc2", ResolutionAttr: ".id", SignalType: "hcl_example", Confidence: 0.9}}},
 	}
 
-	mappings := []TerraformRefMapping{
-		{ServiceName: "svc0", TFDocFiles: []TerraformRefMappingEntry{{TFResourceType: "aws_svc0_res", DocFilePath: "docs/r/svc0_res.html.markdown", Confidence: 0.9}}},
-		{ServiceName: "svc1", TFDocFiles: []TerraformRefMappingEntry{{TFResourceType: "aws_svc1_res", DocFilePath: "docs/r/svc1_res.html.markdown", Confidence: 0.9}}},
-		{ServiceName: "svc2", TFDocFiles: []TerraformRefMappingEntry{{TFResourceType: "aws_svc2_res", DocFilePath: "docs/r/svc2_res.html.markdown", Confidence: 0.9}}},
+	mappings := []types.ControllerMapping{
+		{ServiceName: "svc0", TFDocFiles: []types.MappingEntry{{TFResourceType: "aws_svc0_res", DocFilePath: "docs/r/svc0_res.html.markdown", Confidence: 0.9}}},
+		{ServiceName: "svc1", TFDocFiles: []types.MappingEntry{{TFResourceType: "aws_svc1_res", DocFilePath: "docs/r/svc1_res.html.markdown", Confidence: 0.9}}},
+		{ServiceName: "svc2", TFDocFiles: []types.MappingEntry{{TFResourceType: "aws_svc2_res", DocFilePath: "docs/r/svc2_res.html.markdown", Confidence: 0.9}}},
 	}
 
 	validator := &agent.JSONValidator{RequiredFields: []string{"matches", "unmatched_tf_fields"}}

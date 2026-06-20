@@ -78,7 +78,7 @@ from the JSON field pipeline) and caches results under "analyze_terraform_refs/"
 		mapValidator := &agent.JSONValidator{
 			RequiredFields: []string{"mapping"},
 		}
-		mapResult, err := tools.MapAllControllersToTerraformRefs(ctx, ag, controllers, tfResult.Resources, resultCache, mapValidator, 1, log)
+		mapResult, err := tools.MapAllControllersParallel(ctx, ag, controllers, tfResult.Resources, resultCache, mapValidator, 1, log)
 		if err != nil {
 			return fmt.Errorf("mapping controllers to terraform refs: %w", err)
 		}

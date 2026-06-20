@@ -16,6 +16,7 @@ import (
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/cache"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/framework"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/logger"
+	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/types"
 	"pgregory.net/rapid"
 )
 
@@ -322,16 +323,16 @@ func TestAnalyzeAllTerraformRefs_Success(t *testing.T) {
 		makeTFRefsAnalysisFinalTextResponse(string(resp2)),
 	)
 
-	mappings := []TerraformRefMapping{
+	mappings := []types.ControllerMapping{
 		{
 			ServiceName: "ebs",
-			TFDocFiles: []TerraformRefMappingEntry{
+			TFDocFiles: []types.MappingEntry{
 				{TFResourceType: "aws_ebs_snapshot", DocFilePath: "website/docs/r/ebs_snapshot.html.markdown", Confidence: 0.95},
 			},
 		},
 		{
 			ServiceName: "ec2",
-			TFDocFiles: []TerraformRefMappingEntry{
+			TFDocFiles: []types.MappingEntry{
 				{TFResourceType: "aws_instance", DocFilePath: "website/docs/r/instance.html.markdown", Confidence: 0.9},
 			},
 		},
@@ -378,16 +379,16 @@ func TestAnalyzeAllTerraformRefs_DeduplicatesDocFiles(t *testing.T) {
 	ag := newTFRefsAnalysisMockAgent(t, makeTFRefsAnalysisFinalTextResponse(string(responseJSON)))
 
 	// Same doc file in two mappings — should only be analyzed once
-	mappings := []TerraformRefMapping{
+	mappings := []types.ControllerMapping{
 		{
 			ServiceName: "s3",
-			TFDocFiles: []TerraformRefMappingEntry{
+			TFDocFiles: []types.MappingEntry{
 				{TFResourceType: "aws_s3_bucket", DocFilePath: "website/docs/r/s3_bucket.html.markdown", Confidence: 0.95},
 			},
 		},
 		{
 			ServiceName: "s3_also",
-			TFDocFiles: []TerraformRefMappingEntry{
+			TFDocFiles: []types.MappingEntry{
 				{TFResourceType: "aws_s3_bucket", DocFilePath: "website/docs/r/s3_bucket.html.markdown", Confidence: 0.9},
 			},
 		},
@@ -412,10 +413,10 @@ func TestAnalyzeAllTerraformRefs_SkipsMissingFiles(t *testing.T) {
 
 	ag := newTFRefsAnalysisMockAgent(t) // no responses needed
 
-	mappings := []TerraformRefMapping{
+	mappings := []types.ControllerMapping{
 		{
 			ServiceName: "ec2",
-			TFDocFiles: []TerraformRefMappingEntry{
+			TFDocFiles: []types.MappingEntry{
 				{TFResourceType: "aws_instance", DocFilePath: "website/docs/r/instance.html.markdown", Confidence: 0.95},
 			},
 		},
