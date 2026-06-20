@@ -443,7 +443,7 @@ func TestProperty12_ReportPrioritySortOrder(t *testing.T) {
 			genConfigs[service] = nil
 		}
 
-		report := GenerateReport(matchResults, controllers, genConfigs, nil)
+		report := GenerateReport(matchResults, controllers, genConfigs)
 
 		// Verify: services_by_priority is sorted descending by gap count
 		for i := 1; i < len(report.Summary.ServicesByPriority); i++ {

@@ -37,6 +37,9 @@ func FormatMarkdown(report *types.GapReport, w io.Writer) error {
 	if _, err := fmt.Fprintf(w, "| Correctly Annotated | %d |\n", report.Summary.AnnotatedCount); err != nil {
 		return err
 	}
+	if _, err := fmt.Fprintf(w, "| Incorrectly Annotated | %d |\n", report.Summary.IncorrectCount); err != nil {
+		return err
+	}
 	if _, err := fmt.Fprintf(w, "\n"); err != nil {
 		return err
 	}

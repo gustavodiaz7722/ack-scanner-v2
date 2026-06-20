@@ -4,7 +4,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/ignore"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/logger"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/parser"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/types"
@@ -17,22 +16,15 @@ import (
 //   - matchResults: map of "{service}_{kind}" → MatchFieldsOutput from the matching phase
 //   - controllers: list of discovered controllers (for service name lookup)
 //   - generatorConfigs: map of service name → parsed GeneratorConfig from generator.yaml
-//   - ignoreList: optional ignore list to exclude known false positives (may be nil)
 //
 // For each match entry, the function determines:
 //   - The recommended annotation type based on the TF field_type
 //   - The current annotation status by checking the generator config
 //   - The classification: "gap", "annotated", or "incorrect"
-//
-// Entries classified as "incorrect" are excluded from the report since they
-// represent cases where the scanner's recommendation disagrees with the
-// controller's existing annotation (which is typically correct).
-// Entries matching the ignore list are also excluded.
 func GenerateReport(
 	matchResults map[string]*MatchFieldsOutput,
 	controllers []types.ControllerInfo,
 	generatorConfigs map[string]*parser.GeneratorConfig,
-	ignoreList *ignore.List,
 	log ...*logger.Logger,
 ) *types.GapReport {
 	l := resolveLogger(log)
@@ -56,7 +48,6 @@ func GenerateReport(
 	}
 
 	var entries []types.GapReportEntry
-	var ignoredCount int
 
 	for key, matchOutput := range matchResults {
 		if matchOutput == nil {
@@ -73,24 +64,11 @@ func GenerateReport(
 		genConfig := generatorConfigs[sr.ServiceName]
 
 		for _, match := range matchOutput.Matches {
-			// Check ignore list before processing
-			if ignoreList != nil && ignoreList.IsIgnored(sr.ServiceName, sr.ResourceKind, match.ACKFieldName) {
-				ignoredCount++
-				continue
-			}
-
 			// Determine recommended annotation type from TF field type
 			recommended := recommendedAnnotation(match, matchResults, key)
 
 			// Classify based on generator.yaml
 			status := classifyField(genConfig, sr.ResourceKind, match.ACKFieldName, recommended)
-
-			// Skip "incorrect" entries — these are cases where the scanner's
-			// recommendation disagrees with the controller's existing annotation,
-			// which is typically the correct one.
-			if status == types.CategoryIncorrect {
-				continue
-			}
 
 			entries = append(entries, types.GapReportEntry{
 				ServiceName:           sr.ServiceName,
@@ -109,10 +87,6 @@ func GenerateReport(
 
 	l.Info("report: %d total entries — %d gaps, %d annotated, %d incorrect",
 		summary.TotalMatches, summary.GapCount, summary.AnnotatedCount, summary.IncorrectCount)
-
-	if ignoredCount > 0 {
-		l.Info("report: %d entries excluded by ignore list", ignoredCount)
-	}
 
 	return &types.GapReport{
 		Entries: entries,
