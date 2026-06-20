@@ -138,12 +138,17 @@ func MatchUpjetConfig() framework.MatchConfig[UpjetReferenceInfo, MatchUpjetOutp
 
 // filterFieldsForReferenceMatching excludes fields that already have annotations
 // (is_document, is_iam_policy, or has_reference) from the matching process.
+// It also excludes the "Name" field which is a resource's own identifier, never
+// a cross-resource reference.
 // This function is shared across all reference matching tools (Upjet, API model,
 // Terraform refs).
 func filterFieldsForReferenceMatching(fields []types.FieldInfo) []types.FieldInfo {
 	var filtered []types.FieldInfo
 	for _, f := range fields {
 		if f.IsDocument || f.IsIAMPolicy || f.HasReference {
+			continue
+		}
+		if strings.EqualFold(f.Name, "Name") {
 			continue
 		}
 		filtered = append(filtered, f)
