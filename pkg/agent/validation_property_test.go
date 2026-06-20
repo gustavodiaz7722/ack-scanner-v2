@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -109,7 +110,7 @@ func TestProperty17_JSONValidationRetry(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected ErrSkipItem when all attempts fail, got nil error")
 			}
-			if err != ErrSkipItem {
+			if !errors.Is(err, ErrSkipItem) {
 				t.Fatalf("expected ErrSkipItem, got: %v", err)
 			}
 			// Should have made exactly 3 calls
@@ -242,7 +243,7 @@ func TestProperty18_StaticReferenceValidation(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected ErrSkipItem when all attempts fail, got nil error")
 			}
-			if err != ErrSkipItem {
+			if !errors.Is(err, ErrSkipItem) {
 				t.Fatalf("expected ErrSkipItem, got: %v", err)
 			}
 			// Should have made exactly 3 calls

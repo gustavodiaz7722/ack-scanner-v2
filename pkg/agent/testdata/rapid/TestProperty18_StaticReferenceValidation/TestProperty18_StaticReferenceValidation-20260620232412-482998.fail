@@ -1,0 +1,27 @@
+# 2026/06/20 23:24:12.373162 [TestProperty18_StaticReferenceValidation] [rapid] draw numControllers: 3
+# 2026/06/20 23:24:12.373163 [TestProperty18_StaticReferenceValidation] [rapid] draw numResources_0: 2
+# 2026/06/20 23:24:12.373165 [TestProperty18_StaticReferenceValidation] [rapid] draw numResources_1: 2
+# 2026/06/20 23:24:12.373166 [TestProperty18_StaticReferenceValidation] [rapid] draw numResources_2: 3
+# 2026/06/20 23:24:12.373167 [TestProperty18_StaticReferenceValidation] [rapid] draw validRefAtAttempt: 3
+# 2026/06/20 23:24:12.373168 [TestProperty18_StaticReferenceValidation] [rapid] draw validControllerIdx: 0
+# 2026/06/20 23:24:12.373180 [TestProperty18_StaticReferenceValidation] expected ErrSkipItem, got: validation failed: unknown controller service name "nonexistent_service"; valid names are: svc0, svc1, svc2 (response prefix: {"service_name":"nonexistent_service","kind":"NonexistentKind","data":"result"})
+# 
+v0.4.8#9923817886922119498
+0x0
+0xfe8587e30c01d
+0x1
+0x3aa42ac008391
+0x19e5a45fa3a302
+0x1
+0x13ee87d574dcd0
+0x226de13a5296a
+0x1
+0x1ed2e69bbadc85
+0xa7f2462a04644
+0x2
+0x198b0fd1e107ad
+0x1f841fe5080905
+0xffffffffffffffff
+0x979cd6cfde579
+0x2f10319dd8d24
+0x0

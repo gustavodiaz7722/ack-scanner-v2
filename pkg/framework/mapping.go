@@ -3,6 +3,7 @@ package framework
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -112,8 +113,8 @@ func MapAll[T any, R any](
 			prompt := config.BuildPrompt(controller, targets)
 			agentResult, err := ag.RunWithValidation(ctx, prompt, validator)
 			if err != nil {
-				if err == agent.ErrSkipItem {
-					log.Skip(key, "validation failed after retries")
+				if errors.Is(err, agent.ErrSkipItem) {
+					log.Skip(key, err.Error())
 				} else {
 					log.Error("%s agent call failed for %s: %v", config.ToolName, key, err)
 				}

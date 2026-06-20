@@ -14,6 +14,34 @@ import (
 // after all validation retry attempts have been exhausted.
 var ErrSkipItem = errors.New("agent: validation failed after max retries, skipping item")
 
+// SkipError wraps ErrSkipItem with details about why validation failed.
+// Callers can use errors.Is(err, ErrSkipItem) to detect skips, and
+// type-assert to *SkipError for the validation error and response snippet.
+type SkipError struct {
+	Cause          error  // the validation error (JSON parse failure, reference error, etc.)
+	ResponsePrefix string // first N chars of the raw agent response
+}
+
+func (e *SkipError) Error() string {
+	return fmt.Sprintf("validation failed: %v (response prefix: %.200s)", e.Cause, e.ResponsePrefix)
+}
+
+func (e *SkipError) Unwrap() error {
+	return ErrSkipItem
+}
+
+// newSkipError creates a SkipError with a truncated response preview.
+func newSkipError(cause error, rawResponse string) *SkipError {
+	prefix := rawResponse
+	if len(prefix) > 500 {
+		prefix = prefix[:500] + "..."
+	}
+	return &SkipError{
+		Cause:          cause,
+		ResponsePrefix: prefix,
+	}
+}
+
 // ResponseValidator validates an agent's JSON response.
 type ResponseValidator interface {
 	// ValidateJSON checks that the response is valid JSON.
@@ -232,7 +260,7 @@ func (a *Agent) RunWithValidation(ctx context.Context, prompt string, validator 
 				fmt.Fprintf(config.LogWriter, "[validation] all %d attempts failed (JSON): %v; raw response: %s\n",
 					maxAttempts, jsonErr, result.FinalResponse)
 			}
-			return nil, ErrSkipItem
+			return nil, newSkipError(jsonErr, result.FinalResponse)
 		}
 
 		// Check reference validity
@@ -252,7 +280,7 @@ func (a *Agent) RunWithValidation(ctx context.Context, prompt string, validator 
 				fmt.Fprintf(config.LogWriter, "[validation] all %d attempts failed (references): %v; raw response: %s\n",
 					maxAttempts, refErr, result.FinalResponse)
 			}
-			return nil, ErrSkipItem
+			return nil, newSkipError(refErr, result.FinalResponse)
 		}
 
 		// Both validations passed
