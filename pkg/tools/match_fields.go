@@ -197,7 +197,7 @@ func MatchAllResourcesParallel(
 	results := make([]result, total)
 	sem := make(chan struct{}, maxParallel)
 	var wg sync.WaitGroup
-	var cacheHits, cacheMisses atomic.Int32
+	var cacheHits, cacheMisses, completed atomic.Int32
 
 	for i, item := range items {
 		select {
@@ -221,6 +221,8 @@ func MatchAllResourcesParallel(
 					if err := json.Unmarshal(entry.Result, &matchResult); err == nil {
 						l.CacheHit(matchFieldsTool + "/" + mi.itemKey)
 						cacheHits.Add(1)
+						done := int(completed.Add(1))
+						l.Progress(done, total, "match_fields")
 						results[idx] = result{itemKey: mi.itemKey, output: &matchResult}
 						return
 					}
@@ -231,16 +233,19 @@ func MatchAllResourcesParallel(
 
 			// Cache miss — call agent
 			matchResult, err := MatchResource(ctx, ag, mi.resource, mi.tfFields, mi.controller.ServiceName, resultCache, validator, l)
+			done := int(completed.Add(1))
 			if err != nil {
 				if err == agent.ErrSkipItem {
 					l.Skip(mi.controller.ServiceName+"/"+mi.resource.Kind, "validation failed after retries")
 				} else {
 					l.Error("match_fields error for %s/%s: %v", mi.controller.ServiceName, mi.resource.Kind, err)
 				}
+				l.Progress(done, total, "match_fields")
 				results[idx] = result{itemKey: mi.itemKey, skipped: true}
 				return
 			}
 
+			l.Progress(done, total, "match_fields")
 			results[idx] = result{itemKey: mi.itemKey, output: matchResult}
 		}(i, item)
 	}

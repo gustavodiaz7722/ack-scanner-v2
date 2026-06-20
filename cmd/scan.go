@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -465,72 +463,7 @@ func (o *Orchestrator) mapControllersConcurrent(
 	tfResources []string,
 	validator agent.ResponseValidator,
 ) (*tools.MapAllControllersOutput, error) {
-	output := &tools.MapAllControllersOutput{}
-	total := len(controllers)
-	var completed atomic.Int32
-
-	type result struct {
-		mapping *types.ControllerMapping
-		skipped string
-		err     error
-		index   int
-	}
-
-	results := make([]result, total)
-	sem := make(chan struct{}, o.maxParallel)
-	var wg sync.WaitGroup
-
-	for i, ctrl := range controllers {
-		select {
-		case <-ctx.Done():
-			return output, ctx.Err()
-		default:
-		}
-
-		wg.Add(1)
-		go func(idx int, controller types.ControllerInfo) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			start := time.Now()
-			o.log.AgentCall("map", controller.ServiceName)
-
-			mapping, err := tools.MapController(ctx, o.agent, controller, tfResources, o.resultCache, validator, o.log)
-			done := int(completed.Add(1))
-
-			if err != nil {
-				if err == agent.ErrSkipItem {
-					o.log.Skip(controller.ServiceName, "validation failed after retries")
-					results[idx] = result{skipped: controller.ServiceName, index: idx}
-				} else {
-					o.log.Error("mapping %s: %v", controller.ServiceName, err)
-					results[idx] = result{err: err, index: idx}
-				}
-				o.log.Progress(done, total, "mapping controllers")
-				return
-			}
-
-			numDocs := len(mapping.TFDocFiles)
-			o.log.AgentResult(controller.ServiceName, time.Since(start), numDocs)
-			o.log.Progress(done, total, "mapping controllers")
-			results[idx] = result{mapping: mapping, index: idx}
-		}(i, ctrl)
-	}
-
-	wg.Wait()
-
-	for i, r := range results {
-		if r.err != nil {
-			output.Skipped = append(output.Skipped, controllers[i].ServiceName)
-		} else if r.skipped != "" {
-			output.Skipped = append(output.Skipped, r.skipped)
-		} else if r.mapping != nil {
-			output.Mappings = append(output.Mappings, *r.mapping)
-		}
-	}
-
-	return output, nil
+	return tools.MapAllControllersParallel(ctx, o.agent, controllers, tfResources, o.resultCache, validator, o.maxParallel, o.log)
 }
 
 // analyzeDocsConcurrent analyzes TF docs with bounded concurrency.
@@ -540,96 +473,7 @@ func (o *Orchestrator) analyzeDocsConcurrent(
 	repoDir string,
 	validator agent.ResponseValidator,
 ) (*tools.AnalyzeAllDocsOutput, error) {
-	output := &tools.AnalyzeAllDocsOutput{
-		Results: make(map[string]*tools.AnalyzeFieldsOutput),
-	}
-
-	seen := make(map[string]bool)
-	var docPaths []string
-	for _, mapping := range mappings {
-		for _, entry := range mapping.TFDocFiles {
-			if entry.DocFilePath != "" && !seen[entry.DocFilePath] {
-				seen[entry.DocFilePath] = true
-				docPaths = append(docPaths, entry.DocFilePath)
-			}
-		}
-	}
-
-	total := len(docPaths)
-	var completed atomic.Int32
-
-	type result struct {
-		docPath string
-		output  *tools.AnalyzeFieldsOutput
-		skipped bool
-		err     error
-	}
-
-	results := make([]result, total)
-	sem := make(chan struct{}, o.maxParallel)
-	var wg sync.WaitGroup
-
-	for i, docPath := range docPaths {
-		select {
-		case <-ctx.Done():
-			return output, ctx.Err()
-		default:
-		}
-
-		wg.Add(1)
-		go func(idx int, dp string) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			start := time.Now()
-			docName := filepath.Base(dp)
-			o.log.AgentCall("analyze", docName)
-
-			fullPath := filepath.Join(repoDir, dp)
-			contentBytes, err := os.ReadFile(fullPath)
-			if err != nil {
-				o.log.Skip(docName, fmt.Sprintf("read error: %v", err))
-				results[idx] = result{docPath: dp, err: err}
-				completed.Add(1)
-				return
-			}
-
-			analyzeResult, err := tools.AnalyzeDoc(ctx, o.agent, dp, string(contentBytes), o.resultCache, validator, o.log)
-			done := int(completed.Add(1))
-
-			if err != nil {
-				if err == agent.ErrSkipItem {
-					o.log.Skip(docName, "validation failed")
-					results[idx] = result{docPath: dp, skipped: true}
-				} else {
-					o.log.Error("analyzing %s: %v", docName, err)
-					results[idx] = result{docPath: dp, err: err}
-				}
-				o.log.Progress(done, total, "analyzing docs")
-				return
-			}
-
-			numFields := len(analyzeResult.JSONFields)
-			o.log.AgentResult(docName, time.Since(start), numFields)
-			o.log.Progress(done, total, "analyzing docs")
-			results[idx] = result{docPath: dp, output: analyzeResult}
-		}(i, docPath)
-	}
-
-	wg.Wait()
-
-	for _, r := range results {
-		if r.err != nil {
-			output.Skipped = append(output.Skipped, r.docPath)
-		} else if r.skipped {
-			output.Skipped = append(output.Skipped, r.docPath)
-		} else if r.output != nil {
-			output.Results[r.docPath] = r.output
-		}
-	}
-
-	return output, nil
+	return tools.AnalyzeAllDocsParallel(ctx, o.agent, mappings, repoDir, o.resultCache, validator, o.maxParallel, o.log)
 }
 
 // matchResourcesConcurrent matches resources with bounded concurrency.
@@ -640,119 +484,7 @@ func (o *Orchestrator) matchResourcesConcurrent(
 	mappings []types.ControllerMapping,
 	validator agent.ResponseValidator,
 ) (*tools.MatchAllResourcesOutput, error) {
-	output := &tools.MatchAllResourcesOutput{
-		Results: make(map[string]*tools.MatchFieldsOutput),
-	}
-
-	docFieldsMap := make(map[string][]types.JSONFieldInfo)
-	for docPath, analysis := range analysisResults.Results {
-		if analysis != nil {
-			docFieldsMap[docPath] = analysis.JSONFields
-		}
-	}
-
-	serviceMappings := make(map[string][]string)
-	for _, mapping := range mappings {
-		for _, entry := range mapping.TFDocFiles {
-			serviceMappings[mapping.ServiceName] = append(serviceMappings[mapping.ServiceName], entry.DocFilePath)
-		}
-	}
-
-	type matchItem struct {
-		controller types.ControllerInfo
-		resource   types.ResourceInfo
-		tfFields   []types.JSONFieldInfo
-		itemKey    string
-	}
-
-	var items []matchItem
-	for _, controller := range controllers {
-		docPaths := serviceMappings[controller.ServiceName]
-		var tfJSONFields []types.JSONFieldInfo
-		for _, docPath := range docPaths {
-			if fields, ok := docFieldsMap[docPath]; ok {
-				tfJSONFields = append(tfJSONFields, fields...)
-			}
-		}
-		if len(tfJSONFields) == 0 {
-			continue
-		}
-		for _, resource := range controller.Resources {
-			items = append(items, matchItem{
-				controller: controller,
-				resource:   resource,
-				tfFields:   tfJSONFields,
-				itemKey:    controller.ServiceName + "_" + resource.Kind,
-			})
-		}
-	}
-
-	total := len(items)
-	var completed atomic.Int32
-
-	type result struct {
-		itemKey string
-		output  *tools.MatchFieldsOutput
-		skipped bool
-		err     error
-	}
-
-	results := make([]result, total)
-	sem := make(chan struct{}, o.maxParallel)
-	var wg sync.WaitGroup
-
-	for i, item := range items {
-		select {
-		case <-ctx.Done():
-			return output, ctx.Err()
-		default:
-		}
-
-		wg.Add(1)
-		go func(idx int, mi matchItem) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			start := time.Now()
-			label := mi.controller.ServiceName + "/" + mi.resource.Kind
-			o.log.AgentCall("match", label)
-
-			matchResult, err := tools.MatchResource(ctx, o.agent, mi.resource, mi.tfFields, mi.controller.ServiceName, o.resultCache, validator, o.log)
-			done := int(completed.Add(1))
-
-			if err != nil {
-				if err == agent.ErrSkipItem {
-					o.log.Skip(label, "validation failed")
-					results[idx] = result{itemKey: mi.itemKey, skipped: true}
-				} else {
-					o.log.Error("matching %s: %v", label, err)
-					results[idx] = result{itemKey: mi.itemKey, err: err}
-				}
-				o.log.Progress(done, total, "matching resources")
-				return
-			}
-
-			numMatches := len(matchResult.Matches)
-			o.log.AgentResult(label, time.Since(start), numMatches)
-			o.log.Progress(done, total, "matching resources")
-			results[idx] = result{itemKey: mi.itemKey, output: matchResult}
-		}(i, item)
-	}
-
-	wg.Wait()
-
-	for _, r := range results {
-		if r.err != nil {
-			output.Skipped = append(output.Skipped, r.itemKey)
-		} else if r.skipped {
-			output.Skipped = append(output.Skipped, r.itemKey)
-		} else if r.output != nil {
-			output.Results[r.itemKey] = r.output
-		}
-	}
-
-	return output, nil
+	return tools.MatchAllResourcesParallel(ctx, o.agent, controllers, analysisResults.Results, mappings, o.resultCache, validator, o.maxParallel, o.log)
 }
 
 // loadGeneratorConfigs loads generator.yaml configs for all controllers.

@@ -160,7 +160,7 @@ func AnalyzeAllDocsParallel(
 	results := make([]result, total)
 	sem := make(chan struct{}, maxParallel)
 	var wg sync.WaitGroup
-	var cacheHits, cacheMisses atomic.Int32
+	var cacheHits, cacheMisses, completed atomic.Int32
 
 	for i, docPath := range docPaths {
 		select {
@@ -180,6 +180,8 @@ func AnalyzeAllDocsParallel(
 			contentBytes, err := os.ReadFile(fullPath)
 			if err != nil {
 				l.Skip(dp, fmt.Sprintf("failed to read file: %v", err))
+				done := int(completed.Add(1))
+				l.Progress(done, total, "analyze_fields")
 				results[idx] = result{docPath: dp, skipped: true}
 				return
 			}
@@ -195,6 +197,8 @@ func AnalyzeAllDocsParallel(
 					if err := json.Unmarshal(entry.Result, &cachedOutput); err == nil {
 						l.CacheHit(analyzeFieldsTool + "/" + itemKey)
 						cacheHits.Add(1)
+						done := int(completed.Add(1))
+						l.Progress(done, total, "analyze_fields")
 						results[idx] = result{docPath: dp, output: &cachedOutput}
 						return
 					}
@@ -205,16 +209,19 @@ func AnalyzeAllDocsParallel(
 
 			// Cache miss — call agent
 			analyzeResult, err := AnalyzeDoc(ctx, ag, dp, docContent, resultCache, validator, l)
+			done := int(completed.Add(1))
 			if err != nil {
 				if err == agent.ErrSkipItem {
 					l.Skip(itemKey, "validation failed after retries")
 				} else {
 					l.Error("analyze_fields error for %s: %v", itemKey, err)
 				}
+				l.Progress(done, total, "analyze_fields")
 				results[idx] = result{docPath: dp, skipped: true}
 				return
 			}
 
+			l.Progress(done, total, "analyze_fields")
 			results[idx] = result{docPath: dp, output: analyzeResult}
 		}(i, docPath)
 	}
