@@ -141,15 +141,14 @@ func buildAnalyzeUpjetConfig() framework.AnalysisConfig[AnalyzeUpjetOutput] {
 }
 
 // deriveUpjetItemKey extracts a cache item key from an Upjet config file path.
-// For example: "config/elasticache/config.go" → "elasticache"
+// For example:
+//   - "config/elasticache/config.go" → "elasticache" (old layout)
+//   - "config/cluster/elasticache/config.go" → "elasticache" (new layout)
 func deriveUpjetItemKey(filePath string) string {
-	// Normalize to forward slashes
-	normalized := filepath.ToSlash(filePath)
-
-	// Expected: config/<service>/config.go
-	parts := strings.Split(normalized, "/")
-	if len(parts) >= 3 && parts[0] == "config" && parts[len(parts)-1] == "config.go" {
-		return parts[1]
+	// Reuse the same extraction logic as discovery
+	name := ExtractUpjetServiceName(filePath)
+	if name != "" {
+		return name
 	}
 
 	// Fallback: use the parent directory name
