@@ -53,15 +53,14 @@ func DiscoverTerraform(ctx context.Context, repoCache *cache.RepoCache, log ...*
 			continue
 		}
 
-		service, resource, ok := ExtractTerraformFilenameComponents(name)
+		// Validate the filename is parseable (has at least one underscore)
+		_, _, ok := ExtractTerraformFilenameComponents(name)
 		if !ok {
 			continue
 		}
 
 		resources = append(resources, types.TerraformResourceInfo{
-			ServiceName:  service,
-			ResourceType: resource,
-			DocFilePath:  filepath.Join("website", "docs", "r", name),
+			DocFilePath: filepath.Join("website", "docs", "r", name),
 		})
 	}
 

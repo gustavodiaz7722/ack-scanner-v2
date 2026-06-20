@@ -90,6 +90,13 @@ func (l *Logger) SetPhase(phase int) {
 	l.phase = phase
 }
 
+// SetMaxPhase updates the total number of phases displayed in the log prefix.
+func (l *Logger) SetMaxPhase(max int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.maxPhase = max
+}
+
 // elapsed returns the formatted elapsed time since logger creation.
 func (l *Logger) elapsed() string {
 	d := time.Since(l.start)

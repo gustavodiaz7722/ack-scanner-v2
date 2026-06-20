@@ -95,6 +95,14 @@ func AnalyzeDoc(
 // It iterates over controller mappings, reads each mapped doc file from the repo
 // directory, checks the cache, calls the agent for misses, and aggregates results.
 // On per-doc failure, it logs the error and continues with the remaining docs.
+//
+// NOTE: This function retains its own concurrency implementation rather than using
+// framework.AnalyzeAll because it includes pre-processing logic (collecting unique
+// doc paths from mappings, reading file content from disk) that doesn't cleanly
+// map to the framework's FileToAnalyze interface. The framework expects pre-loaded
+// content, but here content loading is interleaved with the concurrent processing.
+// The scan orchestrator also has its own analyzeDocsConcurrent wrapper that adds
+// progress logging on top of this function's single-item calls.
 func AnalyzeAllDocs(
 	ctx context.Context,
 	ag *agent.Agent,

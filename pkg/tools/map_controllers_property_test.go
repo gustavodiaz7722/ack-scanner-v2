@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/types"
@@ -54,9 +55,7 @@ func TestProperty7_MappingOutputExcludesUnmatchedTerraformResources(t *testing.T
 			tfResource := string(resourceBytes)
 
 			tfResources[i] = types.TerraformResourceInfo{
-				ServiceName:  tfService,
-				ResourceType: "aws_" + tfService + "_" + tfResource,
-				DocFilePath:  "website/docs/r/" + tfService + "_" + tfResource + ".html.markdown",
+				DocFilePath: "website/docs/r/" + tfService + "_" + tfResource + ".html.markdown",
 			}
 		}
 
@@ -72,8 +71,9 @@ func TestProperty7_MappingOutputExcludesUnmatchedTerraformResources(t *testing.T
 			for j := 0; j < numEntries; j++ {
 				tfIdx := rapid.IntRange(0, len(tfResources)-1).Draw(t, "tfIdx")
 				tf := tfResources[tfIdx]
+				_, resourceType, _ := ExtractTerraformFilenameComponents(filepath.Base(tf.DocFilePath))
 				entries = append(entries, types.MappingEntry{
-					TFResourceType: tf.ResourceType,
+					TFResourceType: resourceType,
 					DocFilePath:    tf.DocFilePath,
 					Confidence:     0.8,
 				})
@@ -174,9 +174,7 @@ func TestProperty7_FilterMappingsExcludesUnmatchedTF(t *testing.T) {
 				}
 			}
 			tfResources[i] = types.TerraformResourceInfo{
-				ServiceName:  service,
-				ResourceType: "aws_" + service + "_resource",
-				DocFilePath:  "website/docs/r/" + service + "_resource.html.markdown",
+				DocFilePath: "website/docs/r/" + service + "_resource.html.markdown",
 			}
 		}
 
@@ -195,7 +193,8 @@ func TestProperty7_FilterMappingsExcludesUnmatchedTF(t *testing.T) {
 		// resource whose service is NOT associated with the controller
 		allTFByService := make(map[string][]types.TerraformResourceInfo)
 		for _, tf := range tfResources {
-			allTFByService[tf.ServiceName] = append(allTFByService[tf.ServiceName], tf)
+			service, _, _ := ExtractTerraformFilenameComponents(filepath.Base(tf.DocFilePath))
+			allTFByService[service] = append(allTFByService[service], tf)
 		}
 
 		for _, mapping := range result {

@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
-	"sync"
-	"sync/atomic"
 
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/agent"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/cache"
+	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/framework"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/logger"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/types"
 )
@@ -31,6 +31,9 @@ type MapAllControllersOutput struct {
 // corresponding Terraform documentation files. The prompt includes the
 // controller's service name, resource kinds, and the full list of TF doc
 // filenames for context.
+//
+// This function delegates to the generic framework.MapOne with a mapping config
+// specific to the controller-to-Terraform-doc mapping.
 func MapController(
 	ctx context.Context,
 	ag *agent.Agent,
@@ -42,50 +45,14 @@ func MapController(
 ) (*types.ControllerMapping, error) {
 	l := resolveLogger(log)
 
-	// Check cache first
-	inputParams := buildMapInputParams(controller, tfResources)
-	if resultCache != nil {
-		entry, err := resultCache.Get(mapControllersTool, controller.ServiceName, inputParams)
-		if err == nil && entry != nil {
-			var mapping types.ControllerMapping
-			if err := json.Unmarshal(entry.Result, &mapping); err == nil {
-				l.CacheHit(mapControllersTool + "/" + controller.ServiceName)
-				return &mapping, nil
-			}
-		}
-	}
+	config := buildControllerMappingConfig()
 
-	l.CacheMiss(mapControllersTool + "/" + controller.ServiceName)
-	l.AgentCall("map_controllers", controller.ServiceName)
-
-	// Build the prompt
-	prompt := buildMapControllerPrompt(controller, tfResources)
-
-	// Call the agent with validation
-	result, err := ag.RunWithValidation(ctx, prompt, validator)
+	result, err := framework.MapOne(ctx, config, ag, controller, tfResources, resultCache, validator, l)
 	if err != nil {
-		l.Error("map_controllers agent call failed for %s: %v", controller.ServiceName, err)
 		return nil, err
 	}
 
-	// Parse the response
-	var output MapControllersOutput
-	if err := json.Unmarshal([]byte(result.FinalResponse), &output); err != nil {
-		l.Error("map_controllers failed to parse response for %s: %v", controller.ServiceName, err)
-		return nil, fmt.Errorf("parsing agent response for controller %q: %w", controller.ServiceName, err)
-	}
-
-	// Cache the result
-	if resultCache != nil {
-		resultJSON, _ := json.Marshal(output.Mapping)
-		if err := resultCache.Put(mapControllersTool, controller.ServiceName, inputParams, resultJSON); err != nil {
-			l.Warn("map_controllers failed to cache result for %s: %v", controller.ServiceName, err)
-		} else {
-			l.Debug("map_controllers cached result for %s (%d TF doc mappings)", controller.ServiceName, len(output.Mapping.TFDocFiles))
-		}
-	}
-
-	return &output.Mapping, nil
+	return &result, nil
 }
 
 // MapAllControllers orchestrates mapping all controllers to Terraform docs.
@@ -104,7 +71,8 @@ func MapAllControllers(
 }
 
 // MapAllControllersParallel orchestrates mapping all controllers to Terraform docs
-// with bounded concurrency.
+// with bounded concurrency. It delegates to the generic framework.MapAll with a
+// mapping config specific to the controller-to-Terraform-doc mapping.
 func MapAllControllersParallel(
 	ctx context.Context,
 	ag *agent.Agent,
@@ -116,89 +84,49 @@ func MapAllControllersParallel(
 	log ...*logger.Logger,
 ) (*MapAllControllersOutput, error) {
 	l := resolveLogger(log)
-	output := &MapAllControllersOutput{}
 
-	if maxParallel <= 0 {
-		maxParallel = 1
+	config := buildControllerMappingConfig()
+
+	frameworkResult, err := framework.MapAll(ctx, config, ag, controllers, tfResources, resultCache, validator, maxParallel, l)
+	if err != nil {
+		return nil, err
 	}
 
-	l.Info("map_controllers: processing %d controllers against %d TF resources (parallelism: %d)",
-		len(controllers), len(tfResources), maxParallel)
-
-	type result struct {
-		mapping *types.ControllerMapping
-		skipped string
-		err     error
+	// Convert framework result to our output type, preserving controller ordering
+	output := &MapAllControllersOutput{
+		Skipped: frameworkResult.Skipped,
 	}
 
-	total := len(controllers)
-	results := make([]result, total)
-	sem := make(chan struct{}, maxParallel)
-	var wg sync.WaitGroup
-	var cacheHits, cacheMisses atomic.Int32
-
-	for i, ctrl := range controllers {
-		select {
-		case <-ctx.Done():
-			break
-		default:
-		}
-
-		wg.Add(1)
-		go func(idx int, controller types.ControllerInfo) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			// Check cache first (avoid agent call entirely)
-			inputParams := buildMapInputParams(controller, tfResources)
-			if resultCache != nil {
-				entry, err := resultCache.Get(mapControllersTool, controller.ServiceName, inputParams)
-				if err == nil && entry != nil {
-					var mapping types.ControllerMapping
-					if err := json.Unmarshal(entry.Result, &mapping); err == nil {
-						l.CacheHit(mapControllersTool + "/" + controller.ServiceName)
-						cacheHits.Add(1)
-						results[idx] = result{mapping: &mapping}
-						return
-					}
-				}
-			}
-
-			cacheMisses.Add(1)
-
-			// Cache miss — call agent
-			mapping, err := MapController(ctx, ag, controller, tfResources, resultCache, validator, l)
-			if err != nil {
-				if err == agent.ErrSkipItem {
-					l.Skip(controller.ServiceName, "validation failed after retries")
-					results[idx] = result{skipped: controller.ServiceName}
-				} else {
-					l.Error("mapping %s: %v", controller.ServiceName, err)
-					results[idx] = result{err: err, skipped: controller.ServiceName}
-				}
-				return
-			}
-			results[idx] = result{mapping: mapping}
-		}(i, ctrl)
-	}
-
-	wg.Wait()
-
-	// Aggregate results in order
-	for i, r := range results {
-		if r.mapping != nil {
-			output.Mappings = append(output.Mappings, *r.mapping)
-		} else if r.skipped != "" {
-			output.Skipped = append(output.Skipped, r.skipped)
-		} else if r.err != nil {
-			output.Skipped = append(output.Skipped, controllers[i].ServiceName)
+	for _, ctrl := range controllers {
+		if mapping, ok := frameworkResult.Results[ctrl.ServiceName]; ok {
+			output.Mappings = append(output.Mappings, mapping)
 		}
 	}
-
-	l.CacheSummary("map_controllers", int(cacheHits.Load()), int(cacheMisses.Load()), len(output.Skipped))
 
 	return output, nil
+}
+
+// buildControllerMappingConfig returns the framework.MappingConfig for Controller-to-Terraform mapping.
+func buildControllerMappingConfig() framework.MappingConfig[types.TerraformResourceInfo, types.ControllerMapping] {
+	return framework.MappingConfig[types.TerraformResourceInfo, types.ControllerMapping]{
+		ToolName:    mapControllersTool,
+		BuildPrompt: buildMapControllerPrompt,
+		ParseResult: parseControllerMappingResult,
+		ItemKey: func(controller types.ControllerInfo) string {
+			return controller.ServiceName
+		},
+		InputParams: buildMapInputParams,
+	}
+}
+
+// parseControllerMappingResult parses the agent's JSON response into a ControllerMapping.
+// The agent responds with a wrapper: {"mapping": {...}}, so we unwrap it here.
+func parseControllerMappingResult(response string) (types.ControllerMapping, error) {
+	var output MapControllersOutput
+	if err := json.Unmarshal([]byte(response), &output); err != nil {
+		return types.ControllerMapping{}, fmt.Errorf("parsing controller mapping response: %w", err)
+	}
+	return output.Mapping, nil
 }
 
 // buildMapControllerPrompt constructs the prompt sent to the agent for mapping
@@ -246,10 +174,14 @@ func FilterMappings(controllerServiceNames []string, tfResources []types.Terrafo
 		controllerSet[name] = true
 	}
 
-	// Group TF resources by service name
+	// Group TF resources by service name (derived from DocFilePath)
 	tfByService := make(map[string][]types.TerraformResourceInfo)
 	for _, tf := range tfResources {
-		tfByService[tf.ServiceName] = append(tfByService[tf.ServiceName], tf)
+		service, _, ok := ExtractTerraformFilenameComponents(filepath.Base(tf.DocFilePath))
+		if !ok {
+			continue
+		}
+		tfByService[service] = append(tfByService[service], tf)
 	}
 
 	// Build mappings only for controllers
@@ -258,8 +190,9 @@ func FilterMappings(controllerServiceNames []string, tfResources []types.Terrafo
 		tfDocs := tfByService[serviceName]
 		entries := make([]types.MappingEntry, 0, len(tfDocs))
 		for _, tf := range tfDocs {
+			_, resourceType, _ := ExtractTerraformFilenameComponents(filepath.Base(tf.DocFilePath))
 			entries = append(entries, types.MappingEntry{
-				TFResourceType: tf.ResourceType,
+				TFResourceType: resourceType,
 				DocFilePath:    tf.DocFilePath,
 				Confidence:     1.0,
 			})

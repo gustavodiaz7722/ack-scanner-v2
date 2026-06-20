@@ -95,6 +95,14 @@ func MatchResource(
 // For each controller, for each resource, it finds the TF JSON fields that
 // correspond to this controller's mapped docs, checks the cache, calls the
 // agent for misses, and aggregates all match results.
+//
+// NOTE: This function retains its own concurrency implementation rather than using
+// framework.MatchAll because it includes complex pre-processing: building a
+// doc-fields lookup map from analysis results, constructing service-to-docpath
+// mappings, and flattening controllers×resources into a work queue with per-item
+// TF field assembly. The framework's MatchAll uses a simpler sourceData map[string][]T
+// pattern that doesn't accommodate this multi-step data preparation. The scan
+// orchestrator also has its own matchResourcesConcurrent wrapper.
 func MatchAllResources(
 	ctx context.Context,
 	ag *agent.Agent,

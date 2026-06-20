@@ -58,7 +58,7 @@ func TestProperty5_TerraformFilenameExtractionRoundTrip(t *testing.T) {
 
 // TestProperty6_TerraformDiscoveryJSONOutputValidity verifies that for any
 // discovery result, serializing to JSON SHALL produce valid JSON where every
-// entry contains service_name, resource_type, and doc_file_path.
+// entry contains doc_file_path.
 //
 // **Validates: Requirements 2.4, 2.5**
 func TestProperty6_TerraformDiscoveryJSONOutputValidity(t *testing.T) {
@@ -86,9 +86,7 @@ func TestProperty6_TerraformDiscoveryJSONOutputValidity(t *testing.T) {
 			resourceType := strings.Join(segs, "_")
 
 			resources[i] = types.TerraformResourceInfo{
-				ServiceName:  string(serviceBytes),
-				ResourceType: resourceType,
-				DocFilePath:  "website/docs/r/" + string(serviceBytes) + "_" + resourceType + ".html.markdown",
+				DocFilePath: "website/docs/r/" + string(serviceBytes) + "_" + resourceType + ".html.markdown",
 			}
 		}
 
@@ -126,28 +124,24 @@ func TestProperty6_TerraformDiscoveryJSONOutputValidity(t *testing.T) {
 		}
 
 		for i, entry := range entries {
-			if _, ok := entry["service_name"]; !ok {
-				t.Fatalf("entry %d missing 'service_name'", i)
-			}
-			if _, ok := entry["resource_type"]; !ok {
-				t.Fatalf("entry %d missing 'resource_type'", i)
-			}
 			if _, ok := entry["doc_file_path"]; !ok {
 				t.Fatalf("entry %d missing 'doc_file_path'", i)
 			}
 
-			// Verify values are non-empty strings
-			sn, ok := entry["service_name"].(string)
-			if !ok || sn == "" {
-				t.Fatalf("entry %d: 'service_name' is empty or not a string", i)
-			}
-			rt, ok := entry["resource_type"].(string)
-			if !ok || rt == "" {
-				t.Fatalf("entry %d: 'resource_type' is empty or not a string", i)
-			}
+			// Verify value is a non-empty string
 			dfp, ok := entry["doc_file_path"].(string)
 			if !ok || dfp == "" {
 				t.Fatalf("entry %d: 'doc_file_path' is empty or not a string", i)
+			}
+
+			// Verify service_name and resource_type are derivable
+			base := dfp[len("website/docs/r/"):]
+			service, _, extractOK := ExtractTerraformFilenameComponents(base)
+			if !extractOK {
+				t.Fatalf("entry %d: cannot extract service/resource from doc_file_path %q", i, dfp)
+			}
+			if service == "" {
+				t.Fatalf("entry %d: derived service_name is empty for %q", i, dfp)
 			}
 		}
 	})

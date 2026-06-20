@@ -131,12 +131,12 @@ func TestProperty3_EmptyControllerExclusion(t *testing.T) {
 }
 
 // Property 4: Controller discovery JSON output validity
-// Serialized output is valid JSON with correct schema.
+// Serialized output is valid JSON with correct schema, including annotation fields.
 //
-// **Validates: Requirements 1.5, 1.6**
+// **Validates: Requirements 1.1, 1.2, 1.3**
 func TestProperty4_ControllerDiscoveryJSONOutputValidity(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		// Generate arbitrary controller info
+		// Generate arbitrary controller info with annotation fields
 		n := rapid.IntRange(0, 5).Draw(t, "numControllers")
 		var controllers []types.ControllerInfo
 
@@ -147,10 +147,22 @@ func TestProperty4_ControllerDiscoveryJSONOutputValidity(t *testing.T) {
 				numFields := rapid.IntRange(0, 5).Draw(t, "numFields")
 				var fields []types.FieldInfo
 				for k := 0; k < numFields; k++ {
-					fields = append(fields, types.FieldInfo{
-						Name: rapid.StringMatching(`[A-Z][a-zA-Z]{2,15}`).Draw(t, "fieldName"),
-						Path: rapid.StringMatching(`[a-z][a-zA-Z.]{2,30}`).Draw(t, "fieldPath"),
-					})
+					field := types.FieldInfo{
+						Name:         rapid.StringMatching(`[A-Z][a-zA-Z]{2,15}`).Draw(t, "fieldName"),
+						Path:         rapid.StringMatching(`[a-z][a-zA-Z.]{2,30}`).Draw(t, "fieldPath"),
+						IsDocument:   rapid.Bool().Draw(t, "isDocument"),
+						IsIAMPolicy:  rapid.Bool().Draw(t, "isIAMPolicy"),
+						HasReference: rapid.Bool().Draw(t, "hasReference"),
+					}
+					// Optionally add reference config when HasReference is true
+					if field.HasReference {
+						field.ReferenceConfig = &types.ReferenceInfo{
+							Resource:    rapid.StringMatching(`[A-Z][a-zA-Z]{3,15}`).Draw(t, "refResource"),
+							ServiceName: rapid.StringMatching(`[a-z]{2,10}`).Draw(t, "refServiceName"),
+							Path:        rapid.StringMatching(`(Spec|Status)\.[A-Za-z.]{3,20}`).Draw(t, "refPath"),
+						}
+					}
+					fields = append(fields, field)
 				}
 				resources = append(resources, types.ResourceInfo{
 					Kind:         rapid.StringMatching(`[A-Z][a-zA-Z]{3,15}`).Draw(t, "kind"),
@@ -179,7 +191,7 @@ func TestProperty4_ControllerDiscoveryJSONOutputValidity(t *testing.T) {
 			t.Fatal("serialized output is not valid JSON")
 		}
 
-		// Verify schema: unmarshal and check fields
+		// Verify schema: unmarshal and check fields including new annotation fields
 		var parsed struct {
 			Controllers []struct {
 				ServiceName string `json:"service_name"`
@@ -187,8 +199,16 @@ func TestProperty4_ControllerDiscoveryJSONOutputValidity(t *testing.T) {
 				Resources   []struct {
 					Kind         string `json:"kind"`
 					StringFields []struct {
-						Name string `json:"name"`
-						Path string `json:"path"`
+						Name            string `json:"name"`
+						Path            string `json:"path"`
+						IsDocument      bool   `json:"is_document"`
+						IsIAMPolicy     bool   `json:"is_iam_policy"`
+						HasReference    bool   `json:"has_reference"`
+						ReferenceConfig *struct {
+							Resource    string `json:"resource"`
+							ServiceName string `json:"service_name,omitempty"`
+							Path        string `json:"path"`
+						} `json:"reference_config,omitempty"`
 					} `json:"string_fields"`
 				} `json:"resources"`
 			} `json:"controllers"`
@@ -217,6 +237,55 @@ func TestProperty4_ControllerDiscoveryJSONOutputValidity(t *testing.T) {
 					}
 					if field.Path == "" {
 						t.Fatalf("controller[%d].resources[%d].string_fields[%d] missing path", i, j, k)
+					}
+				}
+			}
+		}
+
+		// Verify backward compatibility: re-parse with old schema (no annotation fields)
+		// This confirms the JSON is additive and doesn't break consumers expecting old schema
+		var oldParsed struct {
+			Controllers []struct {
+				ServiceName string `json:"service_name"`
+				RepoName    string `json:"repo_name"`
+				Resources   []struct {
+					Kind         string `json:"kind"`
+					StringFields []struct {
+						Name string `json:"name"`
+						Path string `json:"path"`
+					} `json:"string_fields"`
+				} `json:"resources"`
+			} `json:"controllers"`
+		}
+
+		if err := json.Unmarshal(data, &oldParsed); err != nil {
+			t.Fatalf("backward-compatible unmarshal failed: %v", err)
+		}
+
+		// Verify annotation fields round-trip correctly
+		for i, ctrl := range parsed.Controllers {
+			for j, res := range ctrl.Resources {
+				for k, field := range res.StringFields {
+					origField := controllers[i].Resources[j].StringFields[k]
+					if field.IsDocument != origField.IsDocument {
+						t.Fatalf("controller[%d].resources[%d].string_fields[%d] is_document mismatch", i, j, k)
+					}
+					if field.IsIAMPolicy != origField.IsIAMPolicy {
+						t.Fatalf("controller[%d].resources[%d].string_fields[%d] is_iam_policy mismatch", i, j, k)
+					}
+					if field.HasReference != origField.HasReference {
+						t.Fatalf("controller[%d].resources[%d].string_fields[%d] has_reference mismatch", i, j, k)
+					}
+					if origField.HasReference && origField.ReferenceConfig != nil {
+						if field.ReferenceConfig == nil {
+							t.Fatalf("controller[%d].resources[%d].string_fields[%d] reference_config missing", i, j, k)
+						}
+						if field.ReferenceConfig.Resource != origField.ReferenceConfig.Resource {
+							t.Fatalf("controller[%d].resources[%d].string_fields[%d] reference_config.resource mismatch", i, j, k)
+						}
+						if field.ReferenceConfig.Path != origField.ReferenceConfig.Path {
+							t.Fatalf("controller[%d].resources[%d].string_fields[%d] reference_config.path mismatch", i, j, k)
+						}
 					}
 				}
 			}

@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -51,22 +52,30 @@ func TestDiscoverTerraform_RealSparseClone(t *testing.T) {
 
 	for _, res := range result.Resources {
 		// Check structure
-		if res.ServiceName == "" {
-			t.Errorf("resource has empty ServiceName: %+v", res)
-		}
-		if res.ResourceType == "" {
-			t.Errorf("resource has empty ResourceType: %+v", res)
-		}
 		if res.DocFilePath == "" {
-			t.Errorf("resource %s_%s has empty DocFilePath", res.ServiceName, res.ResourceType)
+			t.Errorf("resource has empty DocFilePath: %+v", res)
+			continue
 		}
 		if !strings.HasSuffix(res.DocFilePath, ".html.markdown") {
-			t.Errorf("resource %s_%s has unexpected DocFilePath suffix: %s",
-				res.ServiceName, res.ResourceType, res.DocFilePath)
+			t.Errorf("resource has unexpected DocFilePath suffix: %s", res.DocFilePath)
+		}
+
+		// Derive service/resource from DocFilePath for validation
+		base := filepath.Base(res.DocFilePath)
+		service, resource, ok := tools.ExtractTerraformFilenameComponents(base)
+		if !ok {
+			t.Errorf("cannot extract service/resource from DocFilePath: %s", res.DocFilePath)
+			continue
+		}
+		if service == "" {
+			t.Errorf("derived service is empty for DocFilePath: %s", res.DocFilePath)
+		}
+		if resource == "" {
+			t.Errorf("derived resource is empty for DocFilePath: %s", res.DocFilePath)
 		}
 
 		// Check for known resources
-		fullName := res.ServiceName + "_" + res.ResourceType
+		fullName := service + "_" + resource
 		if _, ok := knownResources[fullName]; ok {
 			knownResources[fullName] = true
 		}

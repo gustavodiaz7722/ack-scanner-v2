@@ -175,7 +175,13 @@ func IsControllerRepo(repo *github.Repository) bool {
 	return true
 }
 
+// GeneratorYAMLPath is the relative path to the generator.yaml file in a controller repo.
+const GeneratorYAMLPath = "generator.yaml"
+
 // processController clones/fetches a controller repo and parses its CRDs.
+// After CRD parsing, it loads generator.yaml and enriches each FieldInfo with
+// annotation status (is_document, is_iam_policy, has_reference, reference_config).
+// When generator.yaml is missing or unparseable, annotation fields remain at zero values.
 func (d *GitHubDiscoverer) processController(repo *github.Repository) (*types.ControllerInfo, error) {
 	repoName := repo.GetName()
 	serviceName := strings.TrimSuffix(repoName, ControllerSuffix)
@@ -199,11 +205,47 @@ func (d *GitHubDiscoverer) processController(repo *github.Repository) (*types.Co
 		return nil, nil
 	}
 
+	// Load generator.yaml to enrich fields with annotation status.
+	// If the file is missing or unparseable, all annotation fields stay at zero values.
+	genPath := filepath.Join(repoDir, GeneratorYAMLPath)
+	genConfig, genErr := parser.ParseGeneratorConfig(genPath)
+	if genErr != nil {
+		d.log.Debug("discover_controllers: %s: generator.yaml not available: %v", repoName, genErr)
+	}
+
+	// Enrich fields with annotation status from generator.yaml
+	if genConfig != nil {
+		for i := range resources {
+			EnrichResourceFields(&resources[i], genConfig)
+		}
+	}
+
 	return &types.ControllerInfo{
 		ServiceName: serviceName,
 		RepoName:    repoName,
 		Resources:   resources,
 	}, nil
+}
+
+// EnrichResourceFields enriches the string fields of a resource with annotation
+// status from the parsed generator.yaml configuration.
+func EnrichResourceFields(resource *types.ResourceInfo, genConfig *parser.GeneratorConfig) {
+	for i := range resource.StringFields {
+		field := &resource.StringFields[i]
+		isDoc, isIAM := genConfig.HasAnnotation(resource.Kind, field.Name)
+		field.IsDocument = isDoc
+		field.IsIAMPolicy = isIAM
+
+		ref := genConfig.HasReference(resource.Kind, field.Name)
+		if ref != nil {
+			field.HasReference = true
+			field.ReferenceConfig = &types.ReferenceInfo{
+				Resource:    ref.Resource,
+				ServiceName: ref.ServiceName,
+				Path:        ref.Path,
+			}
+		}
+	}
 }
 
 // FilterControllerRepoNames filters a list of repository metadata, returning only

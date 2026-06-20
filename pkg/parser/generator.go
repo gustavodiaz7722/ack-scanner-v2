@@ -20,10 +20,18 @@ type GeneratorResource struct {
 
 // GeneratorField represents a field configuration in generator.yaml.
 type GeneratorField struct {
-	IsDocument  bool `yaml:"is_document"`
-	IsIAMPolicy bool `yaml:"is_iam_policy"`
-	IsReadOnly  bool `yaml:"is_read_only"`
-	IsImmutable bool `yaml:"is_immutable"`
+	IsDocument  bool                `yaml:"is_document"`
+	IsIAMPolicy bool                `yaml:"is_iam_policy"`
+	IsReadOnly  bool                `yaml:"is_read_only"`
+	IsImmutable bool                `yaml:"is_immutable"`
+	References  *GeneratorReference `yaml:"references"`
+}
+
+// GeneratorReference describes a cross-resource reference configuration in generator.yaml.
+type GeneratorReference struct {
+	Resource    string `yaml:"resource"`
+	ServiceName string `yaml:"service_name"`
+	Path        string `yaml:"path"`
 }
 
 // ParseGeneratorConfig parses a generator.yaml file and extracts field annotations.
@@ -71,6 +79,21 @@ func ParseGeneratorConfigBytes(data []byte) (*GeneratorConfig, error) {
 			if v, ok := fieldMap["is_immutable"]; ok {
 				field.IsImmutable, _ = v.(bool)
 			}
+			if v, ok := fieldMap["references"]; ok {
+				if refMap, ok := v.(map[string]interface{}); ok {
+					ref := &GeneratorReference{}
+					if r, ok := refMap["resource"]; ok {
+						ref.Resource, _ = r.(string)
+					}
+					if s, ok := refMap["service_name"]; ok {
+						ref.ServiceName, _ = s.(string)
+					}
+					if p, ok := refMap["path"]; ok {
+						ref.Path, _ = p.(string)
+					}
+					field.References = ref
+				}
+			}
 			genRes.Fields[fieldName] = field
 		}
 		config.Resources[resName] = genRes
@@ -100,4 +123,28 @@ func (gc *GeneratorConfig) HasAnnotation(resourceName, fieldName string) (isDocu
 		}
 	}
 	return false, false
+}
+
+// HasReference checks if a specific field of a resource has a references configuration.
+// The lookup is case-insensitive for the field name since CRD schemas use camelCase
+// while generator.yaml uses PascalCase.
+// Returns nil if the field has no references block.
+func (gc *GeneratorConfig) HasReference(resourceName, fieldName string) *GeneratorReference {
+	res, ok := gc.Resources[resourceName]
+	if !ok {
+		return nil
+	}
+	// Try exact match first
+	field, ok := res.Fields[fieldName]
+	if ok {
+		return field.References
+	}
+	// Fall back to case-insensitive match
+	fieldLower := strings.ToLower(fieldName)
+	for key, f := range res.Fields {
+		if strings.ToLower(key) == fieldLower {
+			return f.References
+		}
+	}
+	return nil
 }

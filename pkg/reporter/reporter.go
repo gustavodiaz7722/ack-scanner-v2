@@ -26,3 +26,20 @@ func Format(report *types.GapReport, format string, w io.Writer) error {
 		return fmt.Errorf("unsupported format: %q (supported: json, markdown, table)", format)
 	}
 }
+
+// FormatReference writes the reference gap report to the writer in the specified format.
+// Supported formats: "json", "markdown".
+func FormatReference(report *types.ReferenceGapReport, format string, w io.Writer) error {
+	if report == nil {
+		return fmt.Errorf("report is nil")
+	}
+
+	switch format {
+	case "json":
+		return FormatReferenceJSON(report, w)
+	case "markdown", "md":
+		return FormatReferenceMarkdown(report, w)
+	default:
+		return fmt.Errorf("unsupported format: %q (supported: json, markdown)", format)
+	}
+}

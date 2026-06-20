@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -56,7 +57,8 @@ checkout and enumerates all resource documentation files under website/docs/r/.`
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 			fmt.Fprintf(w, "SERVICE\tRESOURCE TYPE\tDOC FILE\n")
 			for _, res := range result.Resources {
-				fmt.Fprintf(w, "%s\t%s\t%s\n", res.ServiceName, res.ResourceType, res.DocFilePath)
+				service, resourceType, _ := tools.ExtractTerraformFilenameComponents(filepath.Base(res.DocFilePath))
+				fmt.Fprintf(w, "%s\t%s\t%s\n", service, resourceType, res.DocFilePath)
 			}
 			return w.Flush()
 		}
