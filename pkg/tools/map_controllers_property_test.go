@@ -38,7 +38,7 @@ func TestProperty7_MappingOutputExcludesUnmatchedTerraformResources(t *testing.T
 
 		// Generate Terraform resources — some match controllers, some don't
 		numTFResources := rapid.IntRange(1, 20).Draw(t, "numTFResources")
-		tfResources := make([]types.TerraformResourceInfo, numTFResources)
+		tfResources := make([]string, numTFResources)
 		for i := range tfResources {
 			serviceLen := rapid.IntRange(2, 12).Draw(t, "tfServiceLen")
 			serviceBytes := make([]byte, serviceLen)
@@ -54,9 +54,7 @@ func TestProperty7_MappingOutputExcludesUnmatchedTerraformResources(t *testing.T
 			}
 			tfResource := string(resourceBytes)
 
-			tfResources[i] = types.TerraformResourceInfo{
-				DocFilePath: "website/docs/r/" + tfService + "_" + tfResource + ".html.markdown",
-			}
+			tfResources[i] = "website/docs/r/" + tfService + "_" + tfResource + ".html.markdown"
 		}
 
 		// Generate random mapping output (simulating what the agent would produce)
@@ -71,10 +69,10 @@ func TestProperty7_MappingOutputExcludesUnmatchedTerraformResources(t *testing.T
 			for j := 0; j < numEntries; j++ {
 				tfIdx := rapid.IntRange(0, len(tfResources)-1).Draw(t, "tfIdx")
 				tf := tfResources[tfIdx]
-				_, resourceType, _ := ExtractTerraformFilenameComponents(filepath.Base(tf.DocFilePath))
+				_, resourceType, _ := ExtractTerraformFilenameComponents(filepath.Base(tf))
 				entries = append(entries, types.MappingEntry{
 					TFResourceType: resourceType,
-					DocFilePath:    tf.DocFilePath,
+					DocFilePath:    tf,
 					Confidence:     0.8,
 				})
 			}
@@ -151,7 +149,7 @@ func TestProperty7_FilterMappingsExcludesUnmatchedTF(t *testing.T) {
 
 		// Generate TF resources — mix of matched and unmatched
 		numTFResources := rapid.IntRange(1, 20).Draw(t, "numTF")
-		tfResources := make([]types.TerraformResourceInfo, numTFResources)
+		tfResources := make([]string, numTFResources)
 		for i := range tfResources {
 			// Randomly decide if this TF resource matches a controller
 			matchesController := rapid.Bool().Draw(t, "matches")
@@ -173,9 +171,7 @@ func TestProperty7_FilterMappingsExcludesUnmatchedTF(t *testing.T) {
 					}
 				}
 			}
-			tfResources[i] = types.TerraformResourceInfo{
-				DocFilePath: "website/docs/r/" + service + "_resource.html.markdown",
-			}
+			tfResources[i] = "website/docs/r/" + service + "_resource.html.markdown"
 		}
 
 		// Use FilterMappings to produce output
@@ -191,9 +187,9 @@ func TestProperty7_FilterMappingsExcludesUnmatchedTF(t *testing.T) {
 
 		// Property: no TF resource type in any mapping should reference a TF
 		// resource whose service is NOT associated with the controller
-		allTFByService := make(map[string][]types.TerraformResourceInfo)
+		allTFByService := make(map[string][]string)
 		for _, tf := range tfResources {
-			service, _, _ := ExtractTerraformFilenameComponents(filepath.Base(tf.DocFilePath))
+			service, _, _ := ExtractTerraformFilenameComponents(filepath.Base(tf))
 			allTFByService[service] = append(allTFByService[service], tf)
 		}
 
@@ -202,7 +198,7 @@ func TestProperty7_FilterMappingsExcludesUnmatchedTF(t *testing.T) {
 				// The entry's doc file should exist in the original TF list
 				found := false
 				for _, tf := range tfResources {
-					if tf.DocFilePath == entry.DocFilePath {
+					if tf == entry.DocFilePath {
 						found = true
 						break
 					}

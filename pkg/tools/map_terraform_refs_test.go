@@ -92,10 +92,10 @@ func TestMapControllerToTerraformRefs_Success(t *testing.T) {
 		},
 	}
 
-	tfResources := []types.TerraformResourceInfo{
-		{DocFilePath: "website/docs/r/elasticache_cluster.html.markdown"},
-		{DocFilePath: "website/docs/r/elasticache_replication_group.html.markdown"},
-		{DocFilePath: "website/docs/r/instance.html.markdown"},
+	tfResources := []string{
+		"website/docs/r/elasticache_cluster.html.markdown",
+		"website/docs/r/elasticache_replication_group.html.markdown",
+		"website/docs/r/instance.html.markdown",
 	}
 
 	validator := &agent.JSONValidator{RequiredFields: []string{"mapping"}}
@@ -135,8 +135,8 @@ func TestMapControllerToTerraformRefs_NoMatch(t *testing.T) {
 		Resources:   []types.ResourceInfo{{Kind: "CustomResource"}},
 	}
 
-	tfResources := []types.TerraformResourceInfo{
-		{DocFilePath: "website/docs/r/instance.html.markdown"},
+	tfResources := []string{
+		"website/docs/r/instance.html.markdown",
 	}
 
 	validator := &agent.JSONValidator{RequiredFields: []string{"mapping"}}
@@ -180,8 +180,8 @@ func TestMapControllerToTerraformRefs_WithCache(t *testing.T) {
 		Resources:   []types.ResourceInfo{{Kind: "Bucket"}},
 	}
 
-	tfResources := []types.TerraformResourceInfo{
-		{DocFilePath: "website/docs/r/s3_bucket.html.markdown"},
+	tfResources := []string{
+		"website/docs/r/s3_bucket.html.markdown",
 	}
 
 	validator := &agent.JSONValidator{RequiredFields: []string{"mapping"}}
@@ -233,9 +233,9 @@ func TestMapAllControllersToTerraformRefs_Success(t *testing.T) {
 		{ServiceName: "iam", RepoName: "iam-controller", Resources: []types.ResourceInfo{{Kind: "Role"}}},
 	}
 
-	tfResources := []types.TerraformResourceInfo{
-		{DocFilePath: "website/docs/r/s3_bucket.html.markdown"},
-		{DocFilePath: "website/docs/r/iam_role.html.markdown"},
+	tfResources := []string{
+		"website/docs/r/s3_bucket.html.markdown",
+		"website/docs/r/iam_role.html.markdown",
 	}
 
 	validator := &agent.JSONValidator{RequiredFields: []string{"mapping"}}
@@ -293,8 +293,8 @@ func TestMapAllControllersToTerraformRefs_Parallel(t *testing.T) {
 		}
 	}
 
-	tfResources := []types.TerraformResourceInfo{
-		{DocFilePath: "website/docs/r/svc0_resource.html.markdown"},
+	tfResources := []string{
+		"website/docs/r/svc0_resource.html.markdown",
 	}
 
 	validator := &agent.JSONValidator{RequiredFields: []string{"mapping"}}
@@ -318,9 +318,9 @@ func TestBuildMapTerraformRefsPrompt_ContainsReferenceContext(t *testing.T) {
 		},
 	}
 
-	tfResources := []types.TerraformResourceInfo{
-		{DocFilePath: "website/docs/r/elasticache_cluster.html.markdown"},
-		{DocFilePath: "website/docs/r/instance.html.markdown"},
+	tfResources := []string{
+		"website/docs/r/elasticache_cluster.html.markdown",
+		"website/docs/r/instance.html.markdown",
 	}
 
 	prompt := buildMapTerraformRefsPrompt(controller, tfResources)
@@ -356,10 +356,10 @@ func TestBuildMapTerraformRefsInputParams(t *testing.T) {
 		},
 	}
 
-	tfResources := []types.TerraformResourceInfo{
-		{DocFilePath: "a.md"},
-		{DocFilePath: "b.md"},
-		{DocFilePath: "c.md"},
+	tfResources := []string{
+		"a.md",
+		"b.md",
+		"c.md",
 	}
 
 	params := buildMapTerraformRefsInputParams(controller, tfResources)

@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/types"
 	"pgregory.net/rapid"
 )
 
@@ -65,7 +64,7 @@ func TestProperty6_TerraformDiscoveryJSONOutputValidity(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		// Generate a random DiscoverTerraformOutput
 		numResources := rapid.IntRange(0, 20).Draw(t, "numResources")
-		resources := make([]types.TerraformResourceInfo, numResources)
+		resources := make([]string, numResources)
 		for i := range resources {
 			serviceLen := rapid.IntRange(2, 12).Draw(t, "serviceLen")
 			serviceBytes := make([]byte, serviceLen)
@@ -85,9 +84,7 @@ func TestProperty6_TerraformDiscoveryJSONOutputValidity(t *testing.T) {
 			}
 			resourceType := strings.Join(segs, "_")
 
-			resources[i] = types.TerraformResourceInfo{
-				DocFilePath: "website/docs/r/" + string(serviceBytes) + "_" + resourceType + ".html.markdown",
-			}
+			resources[i] = "website/docs/r/" + string(serviceBytes) + "_" + resourceType + ".html.markdown"
 		}
 
 		output := &DiscoverTerraformOutput{
@@ -112,36 +109,30 @@ func TestProperty6_TerraformDiscoveryJSONOutputValidity(t *testing.T) {
 			t.Fatal("JSON output missing 'resources' key")
 		}
 
-		// Parse resources array
-		var entries []map[string]interface{}
+		// Parse resources array as flat string list
+		var entries []string
 		if err := json.Unmarshal(resourcesRaw, &entries); err != nil {
-			t.Fatalf("'resources' is not a valid JSON array: %v", err)
+			t.Fatalf("'resources' is not a valid JSON string array: %v", err)
 		}
 
-		// Verify each entry has the required fields
+		// Verify count
 		if len(entries) != numResources {
 			t.Fatalf("expected %d entries, got %d", numResources, len(entries))
 		}
 
-		for i, entry := range entries {
-			if _, ok := entry["doc_file_path"]; !ok {
-				t.Fatalf("entry %d missing 'doc_file_path'", i)
-			}
-
-			// Verify value is a non-empty string
-			dfp, ok := entry["doc_file_path"].(string)
-			if !ok || dfp == "" {
-				t.Fatalf("entry %d: 'doc_file_path' is empty or not a string", i)
+		for i, docFile := range entries {
+			if docFile == "" {
+				t.Fatalf("entry %d is empty", i)
 			}
 
 			// Verify service_name and resource_type are derivable
-			base := dfp[len("website/docs/r/"):]
+			base := docFile[len("website/docs/r/"):]
 			service, _, extractOK := ExtractTerraformFilenameComponents(base)
 			if !extractOK {
-				t.Fatalf("entry %d: cannot extract service/resource from doc_file_path %q", i, dfp)
+				t.Fatalf("entry %d: cannot extract service/resource from %q", i, docFile)
 			}
 			if service == "" {
-				t.Fatalf("entry %d: derived service_name is empty for %q", i, dfp)
+				t.Fatalf("entry %d: derived service_name is empty for %q", i, docFile)
 			}
 		}
 	})

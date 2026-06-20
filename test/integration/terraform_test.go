@@ -50,28 +50,28 @@ func TestDiscoverTerraform_RealSparseClone(t *testing.T) {
 		"sqs_queue":       false,
 	}
 
-	for _, res := range result.Resources {
+	for _, docFile := range result.Resources {
 		// Check structure
-		if res.DocFilePath == "" {
-			t.Errorf("resource has empty DocFilePath: %+v", res)
+		if docFile == "" {
+			t.Errorf("resource has empty doc file path")
 			continue
 		}
-		if !strings.HasSuffix(res.DocFilePath, ".html.markdown") {
-			t.Errorf("resource has unexpected DocFilePath suffix: %s", res.DocFilePath)
+		if !strings.HasSuffix(docFile, ".html.markdown") {
+			t.Errorf("resource has unexpected suffix: %s", docFile)
 		}
 
-		// Derive service/resource from DocFilePath for validation
-		base := filepath.Base(res.DocFilePath)
+		// Derive service/resource from path for validation
+		base := filepath.Base(docFile)
 		service, resource, ok := tools.ExtractTerraformFilenameComponents(base)
 		if !ok {
-			t.Errorf("cannot extract service/resource from DocFilePath: %s", res.DocFilePath)
+			t.Errorf("cannot extract service/resource from: %s", docFile)
 			continue
 		}
 		if service == "" {
-			t.Errorf("derived service is empty for DocFilePath: %s", res.DocFilePath)
+			t.Errorf("derived service is empty for: %s", docFile)
 		}
 		if resource == "" {
-			t.Errorf("derived resource is empty for DocFilePath: %s", res.DocFilePath)
+			t.Errorf("derived resource is empty for: %s", docFile)
 		}
 
 		// Check for known resources

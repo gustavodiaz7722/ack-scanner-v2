@@ -31,14 +31,11 @@ type MapAllControllersOutput struct {
 // corresponding Terraform documentation files. The prompt includes the
 // controller's service name, resource kinds, and the full list of TF doc
 // filenames for context.
-//
-// This function delegates to the generic framework.MapOne with a mapping config
-// specific to the controller-to-Terraform-doc mapping.
 func MapController(
 	ctx context.Context,
 	ag *agent.Agent,
 	controller types.ControllerInfo,
-	tfResources []types.TerraformResourceInfo,
+	tfDocFiles []string,
 	resultCache *cache.ResultCache,
 	validator agent.ResponseValidator,
 	log ...*logger.Logger,
@@ -47,7 +44,7 @@ func MapController(
 
 	config := buildControllerMappingConfig()
 
-	result, err := framework.MapOne(ctx, config, ag, controller, tfResources, resultCache, validator, l)
+	result, err := framework.MapOne(ctx, config, ag, controller, tfDocFiles, resultCache, validator, l)
 	if err != nil {
 		return nil, err
 	}
@@ -62,12 +59,12 @@ func MapAllControllers(
 	ctx context.Context,
 	ag *agent.Agent,
 	controllers []types.ControllerInfo,
-	tfResources []types.TerraformResourceInfo,
+	tfDocFiles []string,
 	resultCache *cache.ResultCache,
 	validator agent.ResponseValidator,
 	log ...*logger.Logger,
 ) (*MapAllControllersOutput, error) {
-	return MapAllControllersParallel(ctx, ag, controllers, tfResources, resultCache, validator, 1, log...)
+	return MapAllControllersParallel(ctx, ag, controllers, tfDocFiles, resultCache, validator, 1, log...)
 }
 
 // MapAllControllersParallel orchestrates mapping all controllers to Terraform docs
@@ -77,7 +74,7 @@ func MapAllControllersParallel(
 	ctx context.Context,
 	ag *agent.Agent,
 	controllers []types.ControllerInfo,
-	tfResources []types.TerraformResourceInfo,
+	tfDocFiles []string,
 	resultCache *cache.ResultCache,
 	validator agent.ResponseValidator,
 	maxParallel int,
@@ -87,7 +84,7 @@ func MapAllControllersParallel(
 
 	config := buildControllerMappingConfig()
 
-	frameworkResult, err := framework.MapAll(ctx, config, ag, controllers, tfResources, resultCache, validator, maxParallel, l)
+	frameworkResult, err := framework.MapAll(ctx, config, ag, controllers, tfDocFiles, resultCache, validator, maxParallel, l)
 	if err != nil {
 		return nil, err
 	}
@@ -107,8 +104,8 @@ func MapAllControllersParallel(
 }
 
 // buildControllerMappingConfig returns the framework.MappingConfig for Controller-to-Terraform mapping.
-func buildControllerMappingConfig() framework.MappingConfig[types.TerraformResourceInfo, types.ControllerMapping] {
-	return framework.MappingConfig[types.TerraformResourceInfo, types.ControllerMapping]{
+func buildControllerMappingConfig() framework.MappingConfig[string, types.ControllerMapping] {
+	return framework.MappingConfig[string, types.ControllerMapping]{
 		ToolName:    mapControllersTool,
 		BuildPrompt: buildMapControllerPrompt,
 		ParseResult: parseControllerMappingResult,
@@ -131,7 +128,7 @@ func parseControllerMappingResult(response string) (types.ControllerMapping, err
 
 // buildMapControllerPrompt constructs the prompt sent to the agent for mapping
 // a single controller to Terraform documentation files.
-func buildMapControllerPrompt(controller types.ControllerInfo, tfResources []types.TerraformResourceInfo) string {
+func buildMapControllerPrompt(controller types.ControllerInfo, tfDocFiles []string) string {
 	var sb strings.Builder
 
 	sb.WriteString("You are mapping an ACK (AWS Controllers for Kubernetes) controller to its corresponding Terraform AWS provider documentation files.\n\n")
@@ -145,8 +142,8 @@ func buildMapControllerPrompt(controller types.ControllerInfo, tfResources []typ
 
 	sb.WriteString("\n## Terraform Documentation Files\n")
 	sb.WriteString("Below is the complete list of Terraform AWS provider resource documentation filenames:\n")
-	for _, tf := range tfResources {
-		sb.WriteString(fmt.Sprintf("  - %s\n", tf.DocFilePath))
+	for _, docFile := range tfDocFiles {
+		sb.WriteString(fmt.Sprintf("  - %s\n", docFile))
 	}
 
 	sb.WriteString("\n## Instructions\n")
@@ -168,20 +165,20 @@ func buildMapControllerPrompt(controller types.ControllerInfo, tfResources []typ
 // matching the given controllers. Terraform resources whose service name does
 // not correspond to any controller are excluded from the output. This function
 // is used for deterministic validation that the property holds.
-func FilterMappings(controllerServiceNames []string, tfResources []types.TerraformResourceInfo) []types.ControllerMapping {
+func FilterMappings(controllerServiceNames []string, tfDocFiles []string) []types.ControllerMapping {
 	controllerSet := make(map[string]bool, len(controllerServiceNames))
 	for _, name := range controllerServiceNames {
 		controllerSet[name] = true
 	}
 
 	// Group TF resources by service name (derived from DocFilePath)
-	tfByService := make(map[string][]types.TerraformResourceInfo)
-	for _, tf := range tfResources {
-		service, _, ok := ExtractTerraformFilenameComponents(filepath.Base(tf.DocFilePath))
+	tfByService := make(map[string][]string)
+	for _, docFile := range tfDocFiles {
+		service, _, ok := ExtractTerraformFilenameComponents(filepath.Base(docFile))
 		if !ok {
 			continue
 		}
-		tfByService[service] = append(tfByService[service], tf)
+		tfByService[service] = append(tfByService[service], docFile)
 	}
 
 	// Build mappings only for controllers
@@ -189,11 +186,11 @@ func FilterMappings(controllerServiceNames []string, tfResources []types.Terrafo
 	for _, serviceName := range controllerServiceNames {
 		tfDocs := tfByService[serviceName]
 		entries := make([]types.MappingEntry, 0, len(tfDocs))
-		for _, tf := range tfDocs {
-			_, resourceType, _ := ExtractTerraformFilenameComponents(filepath.Base(tf.DocFilePath))
+		for _, docFile := range tfDocs {
+			_, resourceType, _ := ExtractTerraformFilenameComponents(filepath.Base(docFile))
 			entries = append(entries, types.MappingEntry{
 				TFResourceType: resourceType,
-				DocFilePath:    tf.DocFilePath,
+				DocFilePath:    docFile,
 				Confidence:     1.0,
 			})
 		}
@@ -214,22 +211,15 @@ func FilterMappings(controllerServiceNames []string, tfResources []types.Terrafo
 }
 
 // buildMapInputParams creates the input parameters used for cache hashing.
-// It includes the controller's service name and resource kinds, plus a
-// representation of the TF resources list for invalidation purposes.
-func buildMapInputParams(controller types.ControllerInfo, tfResources []types.TerraformResourceInfo) map[string]interface{} {
+func buildMapInputParams(controller types.ControllerInfo, tfDocFiles []string) map[string]interface{} {
 	kinds := make([]string, 0, len(controller.Resources))
 	for _, r := range controller.Resources {
 		kinds = append(kinds, r.Kind)
 	}
 
-	tfDocs := make([]string, 0, len(tfResources))
-	for _, tf := range tfResources {
-		tfDocs = append(tfDocs, tf.DocFilePath)
-	}
-
 	return map[string]interface{}{
 		"service_name":   controller.ServiceName,
 		"resource_kinds": kinds,
-		"tf_doc_count":   len(tfResources),
+		"tf_doc_count":   len(tfDocFiles),
 	}
 }

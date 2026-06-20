@@ -45,8 +45,8 @@ type MapAllTerraformRefsOutput struct {
 
 // TerraformRefsMappingConfig returns the framework.MappingConfig for the
 // controller-to-Terraform reference mapping tool.
-func TerraformRefsMappingConfig() framework.MappingConfig[types.TerraformResourceInfo, TerraformRefMapping] {
-	return framework.MappingConfig[types.TerraformResourceInfo, TerraformRefMapping]{
+func TerraformRefsMappingConfig() framework.MappingConfig[string, TerraformRefMapping] {
+	return framework.MappingConfig[string, TerraformRefMapping]{
 		ToolName:    mapTerraformRefsTool,
 		BuildPrompt: buildMapTerraformRefsPrompt,
 		ParseResult: parseTerraformRefsResponse,
@@ -59,13 +59,11 @@ func TerraformRefsMappingConfig() framework.MappingConfig[types.TerraformResourc
 
 // MapControllerToTerraformRefs invokes the agent to map a single ACK controller
 // to Terraform documentation files that contain cross-resource reference patterns.
-// This uses a reference-focused prompt distinct from the JSON field pipeline's
-// map_controllers tool and caches results under the "map_terraform_refs/" namespace.
 func MapControllerToTerraformRefs(
 	ctx context.Context,
 	ag *agent.Agent,
 	controller types.ControllerInfo,
-	tfResources []types.TerraformResourceInfo,
+	tfDocFiles []string,
 	resultCache *cache.ResultCache,
 	validator agent.ResponseValidator,
 	log ...*logger.Logger,
@@ -73,7 +71,7 @@ func MapControllerToTerraformRefs(
 	l := resolveLogger(log)
 	config := TerraformRefsMappingConfig()
 
-	result, err := framework.MapOne(ctx, config, ag, controller, tfResources, resultCache, validator, l)
+	result, err := framework.MapOne(ctx, config, ag, controller, tfDocFiles, resultCache, validator, l)
 	if err != nil {
 		return nil, err
 	}
@@ -82,12 +80,11 @@ func MapControllerToTerraformRefs(
 
 // MapAllControllersToTerraformRefs orchestrates mapping all controllers to
 // Terraform documentation files for cross-resource reference detection.
-// It uses bounded concurrency controlled by maxParallel.
 func MapAllControllersToTerraformRefs(
 	ctx context.Context,
 	ag *agent.Agent,
 	controllers []types.ControllerInfo,
-	tfResources []types.TerraformResourceInfo,
+	tfDocFiles []string,
 	resultCache *cache.ResultCache,
 	validator agent.ResponseValidator,
 	maxParallel int,
@@ -96,7 +93,7 @@ func MapAllControllersToTerraformRefs(
 	l := resolveLogger(log)
 	config := TerraformRefsMappingConfig()
 
-	frameworkResult, err := framework.MapAll(ctx, config, ag, controllers, tfResources, resultCache, validator, maxParallel, l)
+	frameworkResult, err := framework.MapAll(ctx, config, ag, controllers, tfDocFiles, resultCache, validator, maxParallel, l)
 	if err != nil {
 		return nil, err
 	}
@@ -116,9 +113,8 @@ func MapAllControllersToTerraformRefs(
 
 // buildMapTerraformRefsPrompt constructs the prompt sent to the agent for mapping
 // a single controller to Terraform documentation files that contain cross-resource
-// reference patterns. This prompt is specifically focused on identifying TF docs
-// where HCL examples or argument descriptions show references to other AWS resources.
-func buildMapTerraformRefsPrompt(controller types.ControllerInfo, tfResources []types.TerraformResourceInfo) string {
+// reference patterns.
+func buildMapTerraformRefsPrompt(controller types.ControllerInfo, tfDocFiles []string) string {
 	var sb strings.Builder
 
 	sb.WriteString("You are mapping an ACK (AWS Controllers for Kubernetes) controller to Terraform AWS provider documentation files that are likely to contain cross-resource reference patterns.\n\n")
@@ -136,8 +132,8 @@ func buildMapTerraformRefsPrompt(controller types.ControllerInfo, tfResources []
 
 	sb.WriteString("\n## Terraform Documentation Files\n")
 	sb.WriteString("Below is the complete list of Terraform AWS provider resource documentation filenames:\n")
-	for _, tf := range tfResources {
-		fmt.Fprintf(&sb, "  - %s\n", tf.DocFilePath)
+	for _, docFile := range tfDocFiles {
+		fmt.Fprintf(&sb, "  - %s\n", docFile)
 	}
 
 	sb.WriteString("\n## Instructions\n")
@@ -171,7 +167,7 @@ func parseTerraformRefsResponse(response string) (TerraformRefMapping, error) {
 }
 
 // buildMapTerraformRefsInputParams creates the input parameters used for cache hashing.
-func buildMapTerraformRefsInputParams(controller types.ControllerInfo, tfResources []types.TerraformResourceInfo) map[string]any {
+func buildMapTerraformRefsInputParams(controller types.ControllerInfo, tfDocFiles []string) map[string]any {
 	kinds := make([]string, 0, len(controller.Resources))
 	for _, r := range controller.Resources {
 		kinds = append(kinds, r.Kind)
@@ -180,6 +176,6 @@ func buildMapTerraformRefsInputParams(controller types.ControllerInfo, tfResourc
 	return map[string]any{
 		"service_name":   controller.ServiceName,
 		"resource_kinds": kinds,
-		"tf_doc_count":   len(tfResources),
+		"tf_doc_count":   len(tfDocFiles),
 	}
 }

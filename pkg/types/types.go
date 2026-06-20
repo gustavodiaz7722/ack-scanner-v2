@@ -32,13 +32,6 @@ type ReferenceInfo struct {
 	Path        string `json:"path"`
 }
 
-// TerraformResourceInfo describes a Terraform resource documentation file.
-// ServiceName and ResourceType are derived on-demand from DocFilePath using
-// ExtractTerraformFilenameComponents in pkg/tools.
-type TerraformResourceInfo struct {
-	DocFilePath string `json:"doc_file_path"`
-}
-
 // ControllerMapping maps an ACK controller to Terraform doc files.
 type ControllerMapping struct {
 	ServiceName   string         `json:"service_name"`

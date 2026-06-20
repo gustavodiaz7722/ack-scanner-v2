@@ -10,12 +10,13 @@ import (
 
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/cache"
 	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/logger"
-	"github.com/aws-controllers-k8s/ack-scanner-v2/pkg/types"
 )
 
 // DiscoverTerraformOutput is the result of Terraform resource discovery.
+// Resources is a flat list of documentation file paths relative to the repo root
+// (e.g., "website/docs/r/s3_bucket.html.markdown").
 type DiscoverTerraformOutput struct {
-	Resources []types.TerraformResourceInfo `json:"resources"`
+	Resources []string `json:"resources"`
 }
 
 // DiscoverTerraform discovers all AWS Terraform resources by sparse-cloning
@@ -43,7 +44,7 @@ func DiscoverTerraform(ctx context.Context, repoCache *cache.RepoCache, log ...*
 		return nil, fmt.Errorf("reading terraform docs directory %s: %w", docsDir, err)
 	}
 
-	var resources []types.TerraformResourceInfo
+	var resources []string
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -59,9 +60,7 @@ func DiscoverTerraform(ctx context.Context, repoCache *cache.RepoCache, log ...*
 			continue
 		}
 
-		resources = append(resources, types.TerraformResourceInfo{
-			DocFilePath: filepath.Join("website", "docs", "r", name),
-		})
+		resources = append(resources, filepath.Join("website", "docs", "r", name))
 	}
 
 	l.Info("discover_terraform: found %d resource docs across %d files scanned", len(resources), len(entries))

@@ -481,7 +481,7 @@ func convertModelAnalysisResults(r *tools.AnalyzeAllModelsOutput) map[string]*to
 func (o *Orchestrator) mapControllersConcurrent(
 	ctx context.Context,
 	controllers []types.ControllerInfo,
-	tfResources []types.TerraformResourceInfo,
+	tfResources []string,
 	validator agent.ResponseValidator,
 ) (*tools.MapAllControllersOutput, error) {
 	output := &tools.MapAllControllersOutput{}

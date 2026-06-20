@@ -56,9 +56,9 @@ checkout and enumerates all resource documentation files under website/docs/r/.`
 		default:
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 			fmt.Fprintf(w, "SERVICE\tRESOURCE TYPE\tDOC FILE\n")
-			for _, res := range result.Resources {
-				service, resourceType, _ := tools.ExtractTerraformFilenameComponents(filepath.Base(res.DocFilePath))
-				fmt.Fprintf(w, "%s\t%s\t%s\n", service, resourceType, res.DocFilePath)
+			for _, docFile := range result.Resources {
+				service, resourceType, _ := tools.ExtractTerraformFilenameComponents(filepath.Base(docFile))
+				fmt.Fprintf(w, "%s\t%s\t%s\n", service, resourceType, docFile)
 			}
 			return w.Flush()
 		}
