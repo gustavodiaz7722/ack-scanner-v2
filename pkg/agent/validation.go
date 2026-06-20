@@ -240,6 +240,9 @@ func (a *Agent) RunWithValidation(ctx context.Context, prompt string, validator 
 			return nil, err
 		}
 
+		// Sanitize response: strip markdown code fences if present
+		result.FinalResponse = sanitizeJSONResponse(result.FinalResponse)
+
 		// Validate the response
 		responseBytes := []byte(result.FinalResponse)
 
@@ -328,4 +331,30 @@ func WithMaxValidationRetries(n int) func(*ValidationConfig) {
 			c.MaxRetries = n
 		}
 	}
+}
+
+// sanitizeJSONResponse strips common LLM response artifacts that prevent JSON parsing:
+// - Markdown code fences (```json ... ``` or ``` ... ```)
+// - Leading/trailing whitespace
+func sanitizeJSONResponse(response string) string {
+	s := strings.TrimSpace(response)
+
+	// Strip ```json ... ``` or ``` ... ```
+	if strings.HasPrefix(s, "```") {
+		// Remove opening fence (```json or ```)
+		if idx := strings.Index(s, "\n"); idx != -1 {
+			s = s[idx+1:]
+		} else {
+			// No newline after opening fence — strip just the fence
+			s = strings.TrimPrefix(s, "```json")
+			s = strings.TrimPrefix(s, "```")
+		}
+		// Remove closing fence
+		if idx := strings.LastIndex(s, "```"); idx != -1 {
+			s = s[:idx]
+		}
+		s = strings.TrimSpace(s)
+	}
+
+	return s
 }
