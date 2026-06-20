@@ -41,6 +41,7 @@ type Orchestrator struct {
 	maxParallel    int
 	skipReferences bool
 	skipJSONFields bool
+	skipModels     bool
 	outputDir      string
 }
 
@@ -99,7 +100,7 @@ func (o *Orchestrator) RunFullScan(ctx context.Context) (*ScanResult, error) {
 
 	// Phase 4: Discover AWS API models (local operation)
 	var modelsResult *tools.DiscoverModelsOutput
-	if !o.skipReferences {
+	if !o.skipReferences && !o.skipModels {
 		o.log.PhaseStart(4, "Discovering AWS API models")
 		phaseStart = time.Now()
 		modelsResult, err = tools.DiscoverModels(ctx, o.repoCache, o.log)
@@ -153,7 +154,7 @@ func (o *Orchestrator) RunFullScan(ctx context.Context) (*ScanResult, error) {
 
 	// Phase 8: Map controllers → API models (agent)
 	var modelMapResult *tools.MapAllModelsOutput
-	if !o.skipReferences {
+	if !o.skipReferences && !o.skipModels {
 		o.log.PhaseStart(8, "Mapping controllers → API models (agent)")
 		phaseStart = time.Now()
 		modelMapValidator := &agent.JSONValidator{RequiredFields: []string{"service_name"}}
@@ -258,7 +259,7 @@ func (o *Orchestrator) RunFullScan(ctx context.Context) (*ScanResult, error) {
 
 	// Phase 12: Analyze API models for references (agent)
 	var modelAnalysisResult *tools.AnalyzeAllModelsOutput
-	if !o.skipReferences {
+	if !o.skipReferences && !o.skipModels {
 		o.log.PhaseStart(12, "Analyzing API models for references (agent)")
 		phaseStart = time.Now()
 		modelRepoDir, repoErr := o.repoCache.EnsureRepoSparse("aws", "aws-sdk-go-v2", []string{"codegen/sdk-codegen/aws-models"})
@@ -356,7 +357,7 @@ func (o *Orchestrator) RunFullScan(ctx context.Context) (*ScanResult, error) {
 
 	// Phase 16: Match ACK fields ↔ API model references
 	var modelMatchResult *tools.MatchAllModelOutput
-	if !o.skipReferences {
+	if !o.skipReferences && !o.skipModels {
 		o.log.PhaseStart(16, "Matching ACK fields ↔ API model references (agent)")
 		phaseStart = time.Now()
 		modelMatchValidator := &agent.JSONValidator{RequiredFields: []string{"matches", "unmatched_model_fields"}}
@@ -569,6 +570,7 @@ Use --output-dir to write reports to separate files.`,
 
 		skipReferences, _ := cmd.Flags().GetBool("skip-references")
 		skipJSONFields, _ := cmd.Flags().GetBool("skip-json-fields")
+		skipModels, _ := cmd.Flags().GetBool("skip-models")
 		outputDir, _ := cmd.Flags().GetString("output-dir")
 
 		// Set up logger
@@ -617,6 +619,7 @@ Use --output-dir to write reports to separate files.`,
 			maxParallel:    maxParallel,
 			skipReferences: skipReferences,
 			skipJSONFields: skipJSONFields,
+			skipModels:     skipModels,
 			outputDir:      outputDir,
 		}
 
@@ -704,6 +707,7 @@ func init() {
 	scanCmd.Flags().Bool("debug", false, "Enable debug-level logging (includes cache hits, token counts)")
 	scanCmd.Flags().Bool("skip-references", false, "Skip reference detection pipeline (run only JSON field detection)")
 	scanCmd.Flags().Bool("skip-json-fields", false, "Skip JSON field detection pipeline (run only reference detection)")
+	scanCmd.Flags().Bool("skip-models", true, "Skip AWS API model source (temporarily disabled due to throttling)")
 	scanCmd.Flags().String("output-dir", "", "Write reports to separate files in this directory instead of stdout")
 	rootCmd.AddCommand(scanCmd)
 }
