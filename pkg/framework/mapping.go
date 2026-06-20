@@ -70,7 +70,7 @@ func MapAll[T any, R any](
 	results := make([]itemResult, total)
 	sem := make(chan struct{}, maxParallel)
 	var wg sync.WaitGroup
-	var cacheHits, cacheMisses atomic.Int32
+	var cacheHits, cacheMisses, completed atomic.Int32
 
 	for i, ctrl := range controllers {
 		select {
@@ -96,6 +96,8 @@ func MapAll[T any, R any](
 					if err := json.Unmarshal(entry.Result, &r); err == nil {
 						log.CacheHit(config.ToolName + "/" + key)
 						cacheHits.Add(1)
+						done := int(completed.Add(1))
+						log.Progress(done, total, "%s", config.ToolName)
 						results[idx] = itemResult{key: key, result: r}
 						return
 					}
@@ -115,6 +117,8 @@ func MapAll[T any, R any](
 				} else {
 					log.Error("%s agent call failed for %s: %v", config.ToolName, key, err)
 				}
+				done := int(completed.Add(1))
+				log.Progress(done, total, "%s", config.ToolName)
 				results[idx] = itemResult{key: key, skipped: true}
 				return
 			}
@@ -123,6 +127,8 @@ func MapAll[T any, R any](
 			r, err := config.ParseResult(agentResult.FinalResponse)
 			if err != nil {
 				log.Error("%s failed to parse response for %s: %v", config.ToolName, key, err)
+				done := int(completed.Add(1))
+				log.Progress(done, total, "%s", config.ToolName)
 				results[idx] = itemResult{key: key, skipped: true}
 				return
 			}
@@ -135,6 +141,8 @@ func MapAll[T any, R any](
 				}
 			}
 
+			done := int(completed.Add(1))
+			log.Progress(done, total, "%s", config.ToolName)
 			results[idx] = itemResult{key: key, result: r}
 		}(i, ctrl)
 	}
