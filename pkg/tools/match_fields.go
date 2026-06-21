@@ -175,13 +175,9 @@ func MatchAllResourcesParallel(
 			continue
 		}
 		for _, resource := range controller.Resources {
-			// Filter out "Name" field — it's a resource identifier, never a JSON doc
-			filtered := filterFieldsForJSONMatching(resource.StringFields)
-			filteredResource := resource
-			filteredResource.StringFields = filtered
 			items = append(items, matchItem{
 				controller: controller,
-				resource:   filteredResource,
+				resource:   resource,
 				tfFields:   tfJSONFields,
 				itemKey:    controller.ServiceName + "_" + resource.Kind,
 			})
@@ -385,17 +381,4 @@ func buildMatchInputParams(resource types.ResourceInfo, tfJSONFields []types.JSO
 		"ack_field_names": fieldNames,
 		"tf_field_names":  tfFieldNames,
 	}
-}
-
-// filterFieldsForJSONMatching excludes fields that should never be JSON documents
-// or IAM policies. The "Name" field is a resource's own identifier.
-func filterFieldsForJSONMatching(fields []types.FieldInfo) []types.FieldInfo {
-	var filtered []types.FieldInfo
-	for _, f := range fields {
-		if strings.EqualFold(f.Name, "Name") {
-			continue
-		}
-		filtered = append(filtered, f)
-	}
-	return filtered
 }
