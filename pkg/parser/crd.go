@@ -116,6 +116,9 @@ func (p *CRDParser) ParseCRDYAML(data []byte) (*types.ResourceInfo, error) {
 	var fields []types.FieldInfo
 	extractStringFields(specSchema, "", &fields)
 
+	// Filter out generated reference fields (e.g., kmsKeyRef.from.name)
+	fields = filterReferenceFields(fields)
+
 	// Deduplicate by path
 	fields = deduplicateFields(fields)
 
@@ -208,4 +211,45 @@ func deduplicateFields(fields []types.FieldInfo) []types.FieldInfo {
 		}
 	}
 	return result
+}
+
+// filterReferenceFields removes generated ACK reference resolution fields from
+// the field list. The ACK code-generator creates fields like `<name>Ref` with
+// sub-structure `from.name` (and sometimes `from.namespace`) for each configured
+// cross-resource reference. These are not user-facing fields that need annotation.
+//
+// Patterns filtered:
+//   - Any path containing a segment ending in "Ref" followed by "from.name"
+//     (e.g., "kmsKeyRef.from.name", "subnetRefs.from.name")
+//   - Any path containing a segment ending in "Refs" followed by "from.name"
+//     (e.g., "securityGroupRefs.from.name" for plural references)
+func filterReferenceFields(fields []types.FieldInfo) []types.FieldInfo {
+	var result []types.FieldInfo
+	for _, f := range fields {
+		if isGeneratedReferenceField(f.Path) {
+			continue
+		}
+		result = append(result, f)
+	}
+	return result
+}
+
+// isGeneratedReferenceField returns true if the field path matches the pattern
+// of an ACK-generated reference resolution field.
+func isGeneratedReferenceField(path string) bool {
+	// Look for patterns like "*.Ref.from.name", "*.Refs.from.name",
+	// "*Ref.from.name", "*Refs.from.name"
+	// The path uses dot separators: e.g., "kmsKeyRef.from.name"
+	parts := strings.Split(path, ".")
+
+	for i := 0; i < len(parts)-2; i++ {
+		segment := parts[i]
+		if (strings.HasSuffix(segment, "Ref") || strings.HasSuffix(segment, "Refs")) &&
+			parts[i+1] == "from" &&
+			(parts[i+2] == "name" || parts[i+2] == "namespace") {
+			return true
+		}
+	}
+
+	return false
 }

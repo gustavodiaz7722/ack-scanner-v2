@@ -228,15 +228,35 @@ func (d *GitHubDiscoverer) processController(repo *github.Repository) (*types.Co
 }
 
 // EnrichResourceFields enriches the string fields of a resource with annotation
-// status from the parsed generator.yaml configuration.
+// status from the parsed generator.yaml configuration. Fields marked as
+// is_primary_key are removed from the list since they will never be annotated
+// as documents or references. Fields suspected to be primary keys (top-level
+// fields containing <resource>Name or <resource>ID) are flagged but kept.
 func EnrichResourceFields(resource *types.ResourceInfo, genConfig *parser.GeneratorConfig) {
+	var filtered []types.FieldInfo
 	for i := range resource.StringFields {
 		field := &resource.StringFields[i]
 		isDoc, isIAM := genConfig.HasAnnotation(resource.Kind, field.Name)
 		field.IsDocument = isDoc
 		field.IsIAMPolicy = isIAM
 
+		// Check if field is a primary key — if so, exclude it
+		if genConfig.IsPrimaryKey(resource.Kind, field.Name) {
+			field.IsPrimaryKey = true
+			continue
+		}
+
+		// Check if field is a suspected primary key (top-level only)
+		if isSuspectedPrimaryKey(field.Path, field.Name, resource.Kind) {
+			field.SuspectedPrimaryKey = true
+			continue
+		}
+
 		ref := genConfig.HasReference(resource.Kind, field.Name)
+		if ref == nil && strings.Contains(field.Path, ".") {
+			// Try matching by full dot-path (for nested fields like Routes.GatewayId)
+			ref = genConfig.HasReferenceByPath(resource.Kind, field.Path)
+		}
 		if ref != nil {
 			field.HasReference = true
 			field.ReferenceConfig = &types.ReferenceInfo{
@@ -245,7 +265,51 @@ func EnrichResourceFields(resource *types.ResourceInfo, genConfig *parser.Genera
 				Path:        ref.Path,
 			}
 		}
+
+		filtered = append(filtered, *field)
 	}
+	resource.StringFields = filtered
+}
+
+// isSuspectedPrimaryKey returns true if a field is a top-level string field
+// whose name matches the pattern <ResourceKind>Name or <ResourceKind>ID
+// (case-insensitive). These are likely the resource's own identifier field
+// and should not be flagged as needing references or document annotations.
+//
+// Examples for Kind="CacheParameterGroup":
+//   - "cacheParameterGroupName" → true
+//   - "cacheParameterGroupID" → true
+//   - "CacheParameterGroupName" → true
+//
+// Also matches the bare "name" field at top level, which in ACK CRDs is
+// typically the resource's own name/identifier.
+//
+// Only applies to top-level fields (no dots in path).
+func isSuspectedPrimaryKey(path, name, resourceKind string) bool {
+	// Only top-level fields (no dot in the path means it's directly under spec)
+	if strings.Contains(path, ".") {
+		return false
+	}
+
+	nameLower := strings.ToLower(name)
+	kindLower := strings.ToLower(resourceKind)
+
+	// Check if field name matches <kind>name or <kind>id
+	if nameLower == kindLower+"name" || nameLower == kindLower+"id" {
+		return true
+	}
+
+	// Also check <kind>identifier pattern (e.g., "dbClusterIdentifier" for DBCluster)
+	if nameLower == kindLower+"identifier" {
+		return true
+	}
+
+	// Bare "name" at top level is typically the resource's own name
+	if nameLower == "name" {
+		return true
+	}
+
+	return false
 }
 
 // FilterControllerRepoNames filters a list of repository metadata, returning only

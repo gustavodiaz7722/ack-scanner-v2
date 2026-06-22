@@ -16,13 +16,15 @@ type ResourceInfo struct {
 
 // FieldInfo describes a string field within a CRD spec.
 type FieldInfo struct {
-	Name            string         `json:"name"`
-	Path            string         `json:"path"`
-	JSONTag         string         `json:"json_tag"`
-	IsDocument      bool           `json:"is_document"`
-	IsIAMPolicy     bool           `json:"is_iam_policy"`
-	HasReference    bool           `json:"has_reference"`
-	ReferenceConfig *ReferenceInfo `json:"reference_config,omitempty"`
+	Name                string         `json:"name"`
+	Path                string         `json:"path"`
+	JSONTag             string         `json:"json_tag"`
+	IsDocument          bool           `json:"is_document"`
+	IsIAMPolicy         bool           `json:"is_iam_policy"`
+	IsPrimaryKey        bool           `json:"is_primary_key"`
+	SuspectedPrimaryKey bool           `json:"suspected_primary_key"`
+	HasReference        bool           `json:"has_reference"`
+	ReferenceConfig     *ReferenceInfo `json:"reference_config,omitempty"`
 }
 
 // ReferenceInfo describes an existing reference configuration in generator.yaml.
@@ -163,6 +165,7 @@ type SourceStats struct {
 	UpjetOnly       int `json:"upjet_only"`
 	TerraformOnly   int `json:"terraform_docs_only"`
 	ModelOnly       int `json:"model_only"`
+	GeneratorYAML   int `json:"generator_yaml"`
 	TwoSources      int `json:"two_sources"`
 	AllThreeSources int `json:"all_three_sources"`
 }

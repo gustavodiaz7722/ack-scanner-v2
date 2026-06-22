@@ -87,10 +87,10 @@ func FormatMarkdown(report *types.GapReport, w io.Writer) error {
 		if _, err := fmt.Fprintf(w, "### %s\n\n", svc); err != nil {
 			return err
 		}
-		if _, err := fmt.Fprintf(w, "| Resource | ACK Field | TF Field | Recommended | Status |\n"); err != nil {
+		if _, err := fmt.Fprintf(w, "| Resource | ACK Field | Field Path | TF Field | Recommended | Status |\n"); err != nil {
 			return err
 		}
-		if _, err := fmt.Fprintf(w, "| --- | --- | --- | --- | --- |\n"); err != nil {
+		if _, err := fmt.Fprintf(w, "| --- | --- | --- | --- | --- | --- |\n"); err != nil {
 			return err
 		}
 		for _, entry := range entries {
@@ -98,8 +98,12 @@ func FormatMarkdown(report *types.GapReport, w io.Writer) error {
 			if entry.CurrentStatus == string(types.CategoryGap) {
 				fieldDisplay = "⚠️ " + entry.ACKFieldName
 			}
-			if _, err := fmt.Fprintf(w, "| %s | %s | %s | %s | %s |\n",
-				entry.ResourceName, fieldDisplay, entry.TFFieldName,
+			fieldPath := entry.ACKFieldPath
+			if fieldPath == "" {
+				fieldPath = entry.ACKFieldName
+			}
+			if _, err := fmt.Fprintf(w, "| %s | %s | %s | %s | %s | %s |\n",
+				entry.ResourceName, fieldDisplay, fieldPath, entry.TFFieldName,
 				entry.RecommendedAnnotation, entry.CurrentStatus); err != nil {
 				return err
 			}

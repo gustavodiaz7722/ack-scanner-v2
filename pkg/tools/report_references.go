@@ -41,6 +41,9 @@ type mergedEntry struct {
 //
 // When multiple sources agree on a field, confidence is boosted and all sources
 // are listed.
+//
+// Fields that already have references: configuration in generator.yaml are also
+// included in the report as "annotated" entries, providing a complete picture.
 func GenerateReferenceReport(
 	upjetMatches *MatchAllUpjetOutput,
 	modelMatches *MatchAllModelOutput,
@@ -177,7 +180,44 @@ func GenerateReferenceReport(
 
 	l.Info("report_references: merged %d unique field entries from all sources", len(merged))
 
-	// Step 4: Translate TF resources and classify, build report entries
+	// Step 4a: Include fields that already have references: configuration.
+	// These were filtered out of the matching phase but should appear in the
+	// report as "annotated" entries for completeness.
+	for _, ctrl := range controllers {
+		for _, res := range ctrl.Resources {
+			for _, field := range res.StringFields {
+				if !field.HasReference || field.ReferenceConfig == nil {
+					continue
+				}
+				entryKey := ctrl.ServiceName + "|" + res.Kind + "|" + field.Name
+				if _, exists := merged[entryKey]; exists {
+					// Already in merged from a matching source — skip
+					continue
+				}
+				// Build a target TF resource from the reference config
+				targetTF := ""
+				if field.ReferenceConfig.ServiceName != "" && field.ReferenceConfig.Resource != "" {
+					targetTF = "aws_" + field.ReferenceConfig.ServiceName + "_" + camelToSnake(field.ReferenceConfig.Resource)
+				} else if field.ReferenceConfig.Resource != "" {
+					// Same-service reference
+					targetTF = "aws_" + ctrl.ServiceName + "_" + camelToSnake(field.ReferenceConfig.Resource)
+				}
+				merged[entryKey] = &mergedEntry{
+					ServiceName:      ctrl.ServiceName,
+					ResourceName:     res.Kind,
+					ACKFieldName:     field.Name,
+					ACKFieldPath:     field.Path,
+					TargetTFResource: targetTF,
+					Confidence:       1.0,
+					Sources:          []string{"generator_yaml"},
+				}
+			}
+		}
+	}
+
+	l.Info("report_references: %d total entries after including annotated fields", len(merged))
+
+	// Step 5: Translate TF resources and classify, build report entries
 	var entries []types.ReferenceGapEntry
 	for _, m := range merged {
 		// Translate TF resource type to ACK service/resource pair
@@ -188,7 +228,7 @@ func GenerateReferenceReport(
 
 		// Classify against existing generator.yaml references
 		genConfig := generatorConfigs[m.ServiceName]
-		status := ClassifyReferenceField(genConfig, m.ResourceName, m.ACKFieldName, targetACKService, targetACKResource)
+		status := ClassifyReferenceFieldByPath(genConfig, m.ResourceName, m.ACKFieldName, m.ACKFieldPath, targetACKService, targetACKResource)
 
 		entries = append(entries, types.ReferenceGapEntry{
 			ServiceName:       m.ServiceName,
@@ -321,11 +361,24 @@ func ClassifyReferenceField(
 	resourceName, fieldName string,
 	expectedService, expectedResource string,
 ) types.ReferenceCategory {
+	return ClassifyReferenceFieldByPath(genConfig, resourceName, fieldName, "", expectedService, expectedResource)
+}
+
+// ClassifyReferenceFieldByPath determines the classification of a reference field
+// using both leaf name and full dot-path for lookup in generator.yaml.
+func ClassifyReferenceFieldByPath(
+	genConfig *parser.GeneratorConfig,
+	resourceName, fieldName, fieldPath string,
+	expectedService, expectedResource string,
+) types.ReferenceCategory {
 	if genConfig == nil {
 		return types.RefCategoryGap
 	}
 
 	ref := genConfig.HasReference(resourceName, fieldName)
+	if ref == nil && fieldPath != "" && strings.Contains(fieldPath, ".") {
+		ref = genConfig.HasReferenceByPath(resourceName, fieldPath)
+	}
 	if ref == nil {
 		return types.RefCategoryGap
 	}
@@ -418,6 +471,12 @@ func classifySource(stats types.SourceStats, sources []string) types.SourceStats
 	sourceSet := make(map[string]bool)
 	for _, s := range sources {
 		sourceSet[s] = true
+	}
+
+	// generator_yaml is a special source indicating pre-existing annotations
+	if sourceSet["generator_yaml"] {
+		stats.GeneratorYAML++
+		return stats
 	}
 
 	count := len(sourceSet)

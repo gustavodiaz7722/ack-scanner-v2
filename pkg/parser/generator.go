@@ -20,11 +20,12 @@ type GeneratorResource struct {
 
 // GeneratorField represents a field configuration in generator.yaml.
 type GeneratorField struct {
-	IsDocument  bool                `yaml:"is_document"`
-	IsIAMPolicy bool                `yaml:"is_iam_policy"`
-	IsReadOnly  bool                `yaml:"is_read_only"`
-	IsImmutable bool                `yaml:"is_immutable"`
-	References  *GeneratorReference `yaml:"references"`
+	IsDocument   bool                `yaml:"is_document"`
+	IsIAMPolicy  bool                `yaml:"is_iam_policy"`
+	IsReadOnly   bool                `yaml:"is_read_only"`
+	IsImmutable  bool                `yaml:"is_immutable"`
+	IsPrimaryKey bool                `yaml:"is_primary_key"`
+	References   *GeneratorReference `yaml:"references"`
 }
 
 // GeneratorReference describes a cross-resource reference configuration in generator.yaml.
@@ -78,6 +79,9 @@ func ParseGeneratorConfigBytes(data []byte) (*GeneratorConfig, error) {
 			}
 			if v, ok := fieldMap["is_immutable"]; ok {
 				field.IsImmutable, _ = v.(bool)
+			}
+			if v, ok := fieldMap["is_primary_key"]; ok {
+				field.IsPrimaryKey, _ = v.(bool)
 			}
 			if v, ok := fieldMap["references"]; ok {
 				if refMap, ok := v.(map[string]interface{}); ok {
@@ -147,4 +151,51 @@ func (gc *GeneratorConfig) HasReference(resourceName, fieldName string) *Generat
 		}
 	}
 	return nil
+}
+
+// HasReferenceByPath checks if a field (identified by its dot-separated CRD path)
+// has a references configuration in generator.yaml. Generator.yaml uses PascalCase
+// dot-paths (e.g., "Routes.GatewayId") while CRD schemas use camelCase
+// (e.g., "routes.gatewayID"). This method normalizes both to lowercase for comparison.
+//
+// It first tries matching by leaf name (for top-level fields), then by full path.
+func (gc *GeneratorConfig) HasReferenceByPath(resourceName, fieldPath string) *GeneratorReference {
+	res, ok := gc.Resources[resourceName]
+	if !ok {
+		return nil
+	}
+
+	pathLower := strings.ToLower(fieldPath)
+
+	for key, f := range res.Fields {
+		if f.References == nil {
+			continue
+		}
+		if strings.ToLower(key) == pathLower {
+			return f.References
+		}
+	}
+	return nil
+}
+
+// IsPrimaryKey checks if a specific field of a resource is marked as is_primary_key.
+// The lookup is case-insensitive for the field name.
+func (gc *GeneratorConfig) IsPrimaryKey(resourceName, fieldName string) bool {
+	res, ok := gc.Resources[resourceName]
+	if !ok {
+		return false
+	}
+	// Try exact match first
+	field, ok := res.Fields[fieldName]
+	if ok {
+		return field.IsPrimaryKey
+	}
+	// Fall back to case-insensitive match
+	fieldLower := strings.ToLower(fieldName)
+	for key, f := range res.Fields {
+		if strings.ToLower(key) == fieldLower {
+			return f.IsPrimaryKey
+		}
+	}
+	return false
 }

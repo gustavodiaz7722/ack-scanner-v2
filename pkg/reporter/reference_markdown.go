@@ -67,6 +67,9 @@ func FormatReferenceMarkdown(report *types.ReferenceGapReport, w io.Writer) erro
 	if _, err := fmt.Fprintf(w, "| API Model Only | %d |\n", sb.ModelOnly); err != nil {
 		return err
 	}
+	if _, err := fmt.Fprintf(w, "| Already Annotated (generator.yaml) | %d |\n", sb.GeneratorYAML); err != nil {
+		return err
+	}
 	if _, err := fmt.Fprintf(w, "| Two Sources | %d |\n", sb.TwoSources); err != nil {
 		return err
 	}
@@ -119,10 +122,10 @@ func FormatReferenceMarkdown(report *types.ReferenceGapReport, w io.Writer) erro
 		if _, err := fmt.Fprintf(w, "### %s\n\n", svc); err != nil {
 			return err
 		}
-		if _, err := fmt.Fprintf(w, "| Resource | ACK Field | Target | Sources | Status | Confidence |\n"); err != nil {
+		if _, err := fmt.Fprintf(w, "| Resource | ACK Field | Field Path | Target | Sources | Status | Confidence |\n"); err != nil {
 			return err
 		}
-		if _, err := fmt.Fprintf(w, "| --- | --- | --- | --- | --- | --- |\n"); err != nil {
+		if _, err := fmt.Fprintf(w, "| --- | --- | --- | --- | --- | --- | --- |\n"); err != nil {
 			return err
 		}
 		for _, entry := range entries {
@@ -130,13 +133,17 @@ func FormatReferenceMarkdown(report *types.ReferenceGapReport, w io.Writer) erro
 			if entry.CurrentStatus == string(types.RefCategoryGap) {
 				fieldDisplay = "⚠️ " + entry.ACKFieldName
 			}
+			fieldPath := entry.ACKFieldPath
+			if fieldPath == "" {
+				fieldPath = entry.ACKFieldName
+			}
 			target := entry.TargetTFResource
 			if entry.TargetACKService != "" {
 				target = fmt.Sprintf("%s → %s/%s", entry.TargetTFResource, entry.TargetACKService, entry.TargetACKResource)
 			}
 			sources := strings.Join(entry.Sources, ", ")
-			if _, err := fmt.Fprintf(w, "| %s | %s | %s | %s | %s | %.2f |\n",
-				entry.ResourceName, fieldDisplay, target, sources,
+			if _, err := fmt.Fprintf(w, "| %s | %s | %s | %s | %s | %s | %.2f |\n",
+				entry.ResourceName, fieldDisplay, fieldPath, target, sources,
 				entry.CurrentStatus, entry.Confidence); err != nil {
 				return err
 			}

@@ -34,15 +34,17 @@ type ScanResult struct {
 // Orchestrator manages the full scan workflow with per-item agent calls
 // and bounded concurrency.
 type Orchestrator struct {
-	agent          *agent.Agent
-	repoCache      *cache.RepoCache
-	resultCache    *cache.ResultCache
-	log            *logger.Logger
-	maxParallel    int
-	skipReferences bool
-	skipJSONFields bool
-	skipModels     bool
-	outputDir      string
+	agent            *agent.Agent
+	repoCache        *cache.RepoCache
+	resultCache      *cache.ResultCache
+	log              *logger.Logger
+	maxParallel      int
+	skipReferences   bool
+	skipJSONFields   bool
+	skipModels       bool
+	skipUpjet        bool
+	skipTerraformRef bool
+	outputDir        string
 }
 
 // RunFullScan executes the complete workflow with both pipelines.
@@ -83,7 +85,7 @@ func (o *Orchestrator) RunFullScan(ctx context.Context) (*ScanResult, error) {
 
 	// Phase 3: Discover Upjet configs (local operation)
 	var upjetResult *tools.DiscoverUpjetOutput
-	if !o.skipReferences {
+	if !o.skipReferences && !o.skipUpjet {
 		o.log.PhaseStart(3, "Discovering Upjet configs")
 		phaseStart = time.Now()
 		upjetResult, err = tools.DiscoverUpjet(ctx, o.repoCache, o.log)
@@ -95,7 +97,11 @@ func (o *Orchestrator) RunFullScan(ctx context.Context) (*ScanResult, error) {
 			len(upjetResult.Configs), formatDur(time.Since(phaseStart)))
 	} else {
 		o.log.PhaseStart(3, "Discovering Upjet configs (skipped)")
-		o.log.PhaseComplete(3, "Skipped (--skip-references)")
+		if o.skipUpjet {
+			o.log.PhaseComplete(3, "Skipped (--skip-upjet)")
+		} else {
+			o.log.PhaseComplete(3, "Skipped (--skip-references)")
+		}
 	}
 
 	// Phase 4: Discover AWS API models (local operation)
@@ -116,8 +122,10 @@ func (o *Orchestrator) RunFullScan(ctx context.Context) (*ScanResult, error) {
 	}
 
 	// Phase 5: Map controllers → Terraform docs (shared by both pipelines)
+	// Needed when JSON fields pipeline runs OR Terraform refs pipeline runs
 	var jsonMapResult *tools.MapAllControllersOutput
-	if !o.skipJSONFields || !o.skipReferences {
+	needsTFMapping := !o.skipJSONFields || (!o.skipReferences && !o.skipTerraformRef)
+	if needsTFMapping {
 		o.log.PhaseStart(5, "Mapping controllers → Terraform docs (agent)")
 		phaseStart = time.Now()
 		mapValidator := &agent.JSONValidator{RequiredFields: []string{"mapping"}}
@@ -135,7 +143,7 @@ func (o *Orchestrator) RunFullScan(ctx context.Context) (*ScanResult, error) {
 
 	// Phase 7: Map controllers → Upjet configs (agent)
 	var upjetMapResult *tools.MapAllUpjetOutput
-	if !o.skipReferences {
+	if !o.skipReferences && !o.skipUpjet {
 		o.log.PhaseStart(7, "Mapping controllers → Upjet configs (agent)")
 		phaseStart = time.Now()
 		upjetMapValidator := &agent.JSONValidator{RequiredFields: []string{"service_name"}}
@@ -149,7 +157,11 @@ func (o *Orchestrator) RunFullScan(ctx context.Context) (*ScanResult, error) {
 			len(upjetMapResult.Mappings), len(upjetMapResult.Skipped), formatDur(time.Since(phaseStart)))
 	} else {
 		o.log.PhaseStart(7, "Mapping controllers → Upjet configs (skipped)")
-		o.log.PhaseComplete(7, "Skipped (--skip-references)")
+		if o.skipUpjet {
+			o.log.PhaseComplete(7, "Skipped (--skip-upjet)")
+		} else {
+			o.log.PhaseComplete(7, "Skipped (--skip-references)")
+		}
 	}
 
 	// Phase 8: Map controllers → API models (agent)
@@ -201,7 +213,7 @@ func (o *Orchestrator) RunFullScan(ctx context.Context) (*ScanResult, error) {
 
 	// Phase 10: Analyze Terraform docs for resource references (separate agent calls)
 	var tfRefAnalysisResult *tools.AnalyzeAllTerraformRefsOutput
-	if !o.skipReferences {
+	if !o.skipReferences && !o.skipTerraformRef {
 		o.log.PhaseStart(10, "Analyzing Terraform docs for resource references (agent)")
 		phaseStart = time.Now()
 		if repoDir == "" {
@@ -226,12 +238,16 @@ func (o *Orchestrator) RunFullScan(ctx context.Context) (*ScanResult, error) {
 			len(tfRefAnalysisResult.Results), totalTFRefs, len(tfRefAnalysisResult.Skipped), formatDur(time.Since(phaseStart)))
 	} else {
 		o.log.PhaseStart(10, "Analyzing Terraform docs for resource references (skipped)")
-		o.log.PhaseComplete(10, "Skipped (--skip-references)")
+		if o.skipTerraformRef {
+			o.log.PhaseComplete(10, "Skipped (--skip-terraform-refs)")
+		} else {
+			o.log.PhaseComplete(10, "Skipped (--skip-references)")
+		}
 	}
 
 	// Phase 11: Analyze Upjet configs for references (agent)
 	var upjetAnalysisResult *tools.AnalyzeAllUpjetOutput
-	if !o.skipReferences {
+	if !o.skipReferences && !o.skipUpjet {
 		o.log.PhaseStart(11, "Analyzing Upjet configs for references (agent)")
 		phaseStart = time.Now()
 		upjetRepoDir, repoErr := o.repoCache.EnsureRepoSparse("upbound", "provider-aws", []string{"config"})
@@ -254,7 +270,11 @@ func (o *Orchestrator) RunFullScan(ctx context.Context) (*ScanResult, error) {
 			len(upjetAnalysisResult.Results), totalUpjetRefs, len(upjetAnalysisResult.Skipped), formatDur(time.Since(phaseStart)))
 	} else {
 		o.log.PhaseStart(11, "Analyzing Upjet configs for references (skipped)")
-		o.log.PhaseComplete(11, "Skipped (--skip-references)")
+		if o.skipUpjet {
+			o.log.PhaseComplete(11, "Skipped (--skip-upjet)")
+		} else {
+			o.log.PhaseComplete(11, "Skipped (--skip-references)")
+		}
 	}
 
 	// Phase 12: Analyze API models for references (agent)
@@ -309,7 +329,7 @@ func (o *Orchestrator) RunFullScan(ctx context.Context) (*ScanResult, error) {
 
 	// Phase 14: Match ACK fields ↔ Terraform doc references
 	var tfRefMatchResult *tools.MatchAllTerraformRefsOutput
-	if !o.skipReferences {
+	if !o.skipReferences && !o.skipTerraformRef {
 		o.log.PhaseStart(14, "Matching ACK fields ↔ Terraform doc references (agent)")
 		phaseStart = time.Now()
 		tfRefMatchValidator := &agent.JSONValidator{RequiredFields: []string{"matches", "unmatched_tf_fields"}}
@@ -328,12 +348,16 @@ func (o *Orchestrator) RunFullScan(ctx context.Context) (*ScanResult, error) {
 			len(tfRefMatchResult.Results), totalTFRefMatches, len(tfRefMatchResult.Skipped), formatDur(time.Since(phaseStart)))
 	} else {
 		o.log.PhaseStart(14, "Matching ACK fields ↔ Terraform doc references (skipped)")
-		o.log.PhaseComplete(14, "Skipped (--skip-references)")
+		if o.skipTerraformRef {
+			o.log.PhaseComplete(14, "Skipped (--skip-terraform-refs)")
+		} else {
+			o.log.PhaseComplete(14, "Skipped (--skip-references)")
+		}
 	}
 
 	// Phase 15: Match ACK fields ↔ Upjet references
 	var upjetMatchResult *tools.MatchAllUpjetOutput
-	if !o.skipReferences {
+	if !o.skipReferences && !o.skipUpjet {
 		o.log.PhaseStart(15, "Matching ACK fields ↔ Upjet references (agent)")
 		phaseStart = time.Now()
 		upjetMatchValidator := &agent.JSONValidator{RequiredFields: []string{"matches", "unmatched_upjet_fields"}}
@@ -352,7 +376,11 @@ func (o *Orchestrator) RunFullScan(ctx context.Context) (*ScanResult, error) {
 			len(upjetMatchResult.Results), totalUpjetMatches, len(upjetMatchResult.Skipped), formatDur(time.Since(phaseStart)))
 	} else {
 		o.log.PhaseStart(15, "Matching ACK fields ↔ Upjet references (skipped)")
-		o.log.PhaseComplete(15, "Skipped (--skip-references)")
+		if o.skipUpjet {
+			o.log.PhaseComplete(15, "Skipped (--skip-upjet)")
+		} else {
+			o.log.PhaseComplete(15, "Skipped (--skip-references)")
+		}
 	}
 
 	// Phase 16: Match ACK fields ↔ API model references
@@ -396,16 +424,25 @@ func (o *Orchestrator) RunFullScan(ctx context.Context) (*ScanResult, error) {
 
 	// Phase 18: Generate reference gap report
 	if !o.skipReferences {
-		o.log.PhaseStart(18, "Generating reference gap report")
-		phaseStart = time.Now()
-		generatorConfigs := o.loadGeneratorConfigs(controllers)
-		refReport := tools.GenerateReferenceReport(
-			upjetMatchResult, modelMatchResult, tfRefMatchResult,
-			controllers, generatorConfigs, o.log)
-		result.ReferenceReport = refReport
-		o.log.PhaseComplete(18, "Report: %d entries, %d gaps, %d annotated, %d ambiguous (%s)",
-			len(refReport.Entries), refReport.Summary.GapCount, refReport.Summary.AnnotatedCount,
-			refReport.Summary.AmbiguousCount, formatDur(time.Since(phaseStart)))
+		// Generate if at least one reference source ran
+		hasAnySources := (!o.skipUpjet && upjetMatchResult != nil) ||
+			(!o.skipModels && modelMatchResult != nil) ||
+			(!o.skipTerraformRef && tfRefMatchResult != nil)
+		if hasAnySources {
+			o.log.PhaseStart(18, "Generating reference gap report")
+			phaseStart = time.Now()
+			generatorConfigs := o.loadGeneratorConfigs(controllers)
+			refReport := tools.GenerateReferenceReport(
+				upjetMatchResult, modelMatchResult, tfRefMatchResult,
+				controllers, generatorConfigs, o.log)
+			result.ReferenceReport = refReport
+			o.log.PhaseComplete(18, "Report: %d entries, %d gaps, %d annotated, %d ambiguous (%s)",
+				len(refReport.Entries), refReport.Summary.GapCount, refReport.Summary.AnnotatedCount,
+				refReport.Summary.AmbiguousCount, formatDur(time.Since(phaseStart)))
+		} else {
+			o.log.PhaseStart(18, "Generating reference gap report (skipped)")
+			o.log.PhaseComplete(18, "Skipped (all reference sources disabled)")
+		}
 	} else {
 		o.log.PhaseStart(18, "Generating reference gap report (skipped)")
 		o.log.PhaseComplete(18, "Skipped (--skip-references)")
@@ -571,6 +608,8 @@ Use --output-dir to write reports to separate files.`,
 		skipReferences, _ := cmd.Flags().GetBool("skip-references")
 		skipJSONFields, _ := cmd.Flags().GetBool("skip-json-fields")
 		skipModels, _ := cmd.Flags().GetBool("skip-models")
+		skipUpjet, _ := cmd.Flags().GetBool("skip-upjet")
+		skipTerraformRef, _ := cmd.Flags().GetBool("skip-terraform-refs")
 		outputDir, _ := cmd.Flags().GetString("output-dir")
 
 		// Set up logger
@@ -612,15 +651,17 @@ Use --output-dir to write reports to separate files.`,
 
 		// Create orchestrator
 		orch := &Orchestrator{
-			agent:          ag,
-			repoCache:      repoCache,
-			resultCache:    resultCache,
-			log:            log,
-			maxParallel:    maxParallel,
-			skipReferences: skipReferences,
-			skipJSONFields: skipJSONFields,
-			skipModels:     skipModels,
-			outputDir:      outputDir,
+			agent:            ag,
+			repoCache:        repoCache,
+			resultCache:      resultCache,
+			log:              log,
+			maxParallel:      maxParallel,
+			skipReferences:   skipReferences,
+			skipJSONFields:   skipJSONFields,
+			skipModels:       skipModels,
+			skipUpjet:        skipUpjet,
+			skipTerraformRef: skipTerraformRef,
+			outputDir:        outputDir,
 		}
 
 		// Run full scan
@@ -708,6 +749,8 @@ func init() {
 	scanCmd.Flags().Bool("skip-references", false, "Skip reference detection pipeline (run only JSON field detection)")
 	scanCmd.Flags().Bool("skip-json-fields", false, "Skip JSON field detection pipeline (run only reference detection)")
 	scanCmd.Flags().Bool("skip-models", true, "Skip AWS API model source (temporarily disabled due to throttling)")
+	scanCmd.Flags().Bool("skip-upjet", false, "Skip Upjet/Crossplane reference source")
+	scanCmd.Flags().Bool("skip-terraform-refs", false, "Skip Terraform documentation reference source")
 	scanCmd.Flags().String("output-dir", "", "Write reports to separate files in this directory instead of stdout")
 	rootCmd.AddCommand(scanCmd)
 }

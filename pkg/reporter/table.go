@@ -11,8 +11,8 @@ import (
 // FormatTable writes the gap report as a simple text table format.
 func FormatTable(report *types.GapReport, w io.Writer) error {
 	// Header
-	header := fmt.Sprintf("%-20s %-20s %-30s %-30s %-15s %-12s",
-		"SERVICE", "RESOURCE", "ACK FIELD", "TF FIELD", "RECOMMENDED", "STATUS")
+	header := fmt.Sprintf("%-20s %-20s %-30s %-40s %-30s %-15s %-12s",
+		"SERVICE", "RESOURCE", "ACK FIELD", "FIELD PATH", "TF FIELD", "RECOMMENDED", "STATUS")
 	if _, err := fmt.Fprintln(w, header); err != nil {
 		return err
 	}
@@ -22,10 +22,15 @@ func FormatTable(report *types.GapReport, w io.Writer) error {
 
 	// Entries
 	for _, entry := range report.Entries {
-		line := fmt.Sprintf("%-20s %-20s %-30s %-30s %-15s %-12s",
+		fieldPath := entry.ACKFieldPath
+		if fieldPath == "" {
+			fieldPath = entry.ACKFieldName
+		}
+		line := fmt.Sprintf("%-20s %-20s %-30s %-40s %-30s %-15s %-12s",
 			truncate(entry.ServiceName, 20),
 			truncate(entry.ResourceName, 20),
 			truncate(entry.ACKFieldName, 30),
+			truncate(fieldPath, 40),
 			truncate(entry.TFFieldName, 30),
 			truncate(entry.RecommendedAnnotation, 15),
 			truncate(entry.CurrentStatus, 12))
